@@ -1,0 +1,20 @@
+goos: linux
+goarch: amd64
+pkg: github.com/fredbi/core/json/writers/benchmark
+cpu: AMD Ryzen 7 5800X 8-Core Processor             
+BenchmarkWriters/canada_geometry/our-unbuffered-16	4637	258204 ns/op	1047.26 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/canada_geometry/our-buffered-16	5234	227139 ns/op	1190.48 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/canada_geometry/our-yaml-16	948	1243205 ns/op	485.81 MB/s	20 B/op	0 allocs/op
+BenchmarkWriters/canada_geometry/easyjson-16	4042	272514 ns/op	992.28 MB/s	263456 B/op	19 allocs/op
+BenchmarkWriters/citm_catalog/our-unbuffered-16	656	1749916 ns/op	285.92 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/citm_catalog/our-buffered-16	1172	924828 ns/op	540.98 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/citm_catalog/our-yaml-16	396	2962032 ns/op	373.67 MB/s	24 B/op	0 allocs/op
+BenchmarkWriters/citm_catalog/easyjson-16	996	1208677 ns/op	413.97 MB/s	493766 B/op	27 allocs/op
+BenchmarkWriters/golang_source/our-unbuffered-16	200	5943298 ns/op	326.50 MB/s	2 B/op	0 allocs/op
+BenchmarkWriters/golang_source/our-buffered-16	378	3082726 ns/op	629.49 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/golang_source/our-yaml-16	70	16683897 ns/op	393.55 MB/s	32 B/op	0 allocs/op
+BenchmarkWriters/golang_source/easyjson-16	319	3722144 ns/op	521.56 MB/s	1937981 B/op	72 allocs/op
+BenchmarkWriters/twitter_status/our-unbuffered-16	814	1350801 ns/op	345.65 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/twitter_status/our-buffered-16	1312	920143 ns/op	507.43 MB/s	0 B/op	0 allocs/op
+BenchmarkWriters/twitter_status/our-yaml-16	732	1550148 ns/op	390.92 MB/s	26 B/op	0 allocs/op
+BenchmarkWriters/twitter_status/easyjson-16	1125	1106256 ns/op	422.06 MB/s	461284 B/op	26 allocs/op

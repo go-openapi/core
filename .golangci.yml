@@ -1,0 +1,94 @@
+version: "2"
+linters:
+  default: all
+  disable:
+    - cyclop
+    - depguard
+    - errchkjson
+    - errorlint
+    - err113 # temporarily disabled
+    - exhaustruct
+    - forcetypeassert
+    - funlen
+    #- gochecknoglobals
+    #- gochecknoinits
+    - gocognit
+    - goconst
+    - godot
+    - godox
+    - gomoddirectives
+    - gomodguard
+    - gomodguard_v2
+    #- gosmopolitan
+    - inamedparam
+    - ireturn
+    - lll
+    - musttag
+    - nestif
+    - nlreturn
+    - noinlineerr
+    - nonamedreturns
+    - paralleltest
+    - recvcheck
+    - testpackage
+    - thelper
+    - tparallel
+    - unparam
+    - varnamelen
+    - whitespace
+    - wrapcheck
+    - wsl
+    - wsl_v5
+  settings:
+    dupl:
+      threshold: 200
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    gocyclo:
+      min-complexity: 45
+    exhaustive:
+      default-signifies-exhaustive: true
+      default-case-required: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      # The default JSON lexer pervasively converts buffer indices / offsets / lengths
+      # (all non-negative by construction) to the uint64 scan Offset, and decodes \uXXXX
+      # code points (four hex nibbles, so <= 0xFFFF) to rune. gosec's G115 integer-overflow
+      # heuristic flags every such conversion (~50 sites), all provably in range — see the
+      # verification in the review notes. Scope the suppression to this package.
+      - path: lexers/default-lexer/
+        linters:
+          - gosec
+        text: G115
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+  settings:
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/fredbi/core
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

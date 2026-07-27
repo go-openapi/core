@@ -1,0 +1,102 @@
+# benchviz configuration — Azure-lanes: every variant/option lane of the default
+# lexer on ONE payload (the merged go-openapi/azure OpenAPI spec), plain vs PGO build.
+#
+# Two bars per row = the same lane built plain (base) and with PGO + hot-loop
+# alignment (pgo). Rows are lanes, split into two stacked charts: the iteration-mode
+# matrix, and the option-cost lanes. Data source: BenchmarkAzureLanes.
+#
+# Regenerate:  ./regen.sh   (from the benchmark module root: ./benchviz/azure_lanes/regen.sh)
+# Render:      benchviz -c azure_lanes.yaml -png -o azure_lanes.png benchmark.txt
+name: Default lexer — Azure payload, all lanes, plain vs PGO
+environment: 'linux/amd64 · AMD Ryzen 7 5800X · median of 6'
+
+render:
+  title: 'default-lexer on go-openapi/azure — MB/s, higher is better (plain vs PGO build)'
+  theme: vintage
+  chart: barchart
+  legend: bottom
+  scale: auto
+  orientation: horizontal
+  layout:
+    horizontal: 1   # single column: 2 charts stacked vertically
+  screenshot:
+    width: 1100
+    height: 1035
+    sleep: 5s
+
+metrics:
+  - id: MBytesPerS
+    title: Throughput
+    axis: 'MB/s'
+
+functions:
+  - id: azure
+    title: ''
+    match: 'AzureLanes'
+
+# two series (bars): the same binary built plain, and built with PGO + alignhot.
+versions:
+  - id: base
+    title: plain build
+    match: '/base/'
+  - id: pgo
+    title: PGO build (+alignhot)
+    match: '/pgo/'
+
+# one row per lane; id is the display label, match is the (unique) lane id.
+contexts:
+  - id: 'L buf push'
+    match: 'sem-buffer-push-dflt'
+  - id: 'L buf pull'
+    match: 'sem-buffer-pull-dflt'
+  - id: 'L reader push'
+    match: 'sem-reader-push-dflt'
+  - id: 'L reader pull'
+    match: 'sem-reader-pull-dflt'
+  - id: 'VL buf push'
+    match: 'vrb-buffer-push-dflt'
+  - id: 'VL buf pull'
+    match: 'vrb-buffer-pull-dflt'
+  - id: 'VL reader push'
+    match: 'vrb-reader-push-dflt'
+  - id: 'VL reader pull'
+    match: 'vrb-reader-pull-dflt'
+  - id: 'L no-AVX2'
+    match: 'sem-buffer-push-noavx2'
+  - id: 'L emit-sep'
+    match: 'sem-buffer-push-noelide'
+  - id: 'L +pointer'
+    match: 'sem-buffer-push-pointer'
+  - id: 'VL elide-sep'
+    match: 'vrb-buffer-push-elide'
+  - id: 'VL +pointer'
+    match: 'vrb-buffer-push-pointer'
+
+categories:
+  - id: modes
+    title: 'Iteration modes — {L,VL} × {buffer,reader} × {push,pull}, default options'
+    includes:
+      functions: [azure]
+      versions: [base, pgo]
+      contexts:
+        - 'L buf push'
+        - 'L buf pull'
+        - 'L reader push'
+        - 'L reader pull'
+        - 'VL buf push'
+        - 'VL buf pull'
+        - 'VL reader push'
+        - 'VL reader pull'
+      metrics: [MBytesPerS]
+  - id: options
+    title: 'Option costs — on the L / VL buffer-push base (AVX2, separators, JSON pointer)'
+    includes:
+      functions: [azure]
+      versions: [base, pgo]
+      contexts:
+        - 'L no-AVX2'
+        - 'L emit-sep'
+        - 'L +pointer'
+        - 'VL elide-sep'
+        - 'VL +pointer'
+      metrics: [MBytesPerS]

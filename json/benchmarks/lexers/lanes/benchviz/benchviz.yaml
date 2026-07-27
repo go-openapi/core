@@ -1,0 +1,129 @@
+# benchviz configuration — JSON lexers (default-lexer L + VL) vs easyjson jlexer
+# and go-json-experiment json/v2 (jsontext).
+#
+# 18 workloads split into 5 scenario charts (stacked). The function id is empty on
+# purpose so the y-axis labels are just the workload name (benchviz composes the
+# label as "<function-id> - <context-id>").
+#
+# Regenerate:  benchviz -c benchviz.yaml -png -o throughput.png benchmark.txt
+# Data:        median of 3 runs — see README.md.
+name: JSON lexers vs easyjson & json/v2
+environment: ''
+
+render:
+  title: 'default-lexer (L + VL) vs easyjson & json/v2 — MB/s, higher is better'
+  theme: vintage
+  chart: barchart
+  legend: bottom
+  scale: auto
+  orientation: horizontal
+  layout:
+    horizontal: 1   # single column: 5 full-width charts stacked vertically
+  screenshot:
+    width: 1100
+    height: 2740
+    sleep: 5s
+
+metrics:
+  - id: MBytesPerS
+    title: Throughput
+    axis: 'MB/s'
+
+functions:
+  - id: lexers
+    title: ''      # empty title => context-only y-axis labels (no 'lexers - ' prefix)
+    match: 'Lexers'
+
+# one bar (series) per implementation, shown side by side
+versions:
+  - id: L
+    title: L (semantic)
+    match: 'L-semantic'
+  - id: VL
+    title: VL (verbatim)
+    match: 'VL-verbatim'
+  - id: easyjson
+    title: easyjson
+    match: 'easyjson'
+  - id: jsontext
+    title: json/v2 (jsontext)
+    match: 'jsontext'
+
+# one bar group per workload; id is the display label
+contexts:
+  - id: azure_swagger
+    match: 'azure_swagger'
+    notmatch: 'pretty'
+  - id: azure_swagger.pretty
+    match: 'azure_swagger.pretty'
+  - id: canada_geometry
+    match: 'canada_geometry'
+  - id: mesh
+    match: 'mesh'
+    notmatch: 'pretty'
+  - id: mesh.pretty
+    match: 'mesh.pretty'
+  - id: numbers
+    match: 'numbers'
+  - id: gsoc-2018
+    match: 'gsoc-2018'
+  - id: github_events
+    match: 'github_events'
+  - id: update-center
+    match: 'update-center'
+  - id: apache_builds
+    match: 'apache_builds'
+  - id: citm_catalog
+    match: 'citm_catalog'
+  - id: golang_source
+    match: 'golang_source'
+  - id: marine_ik
+    match: 'marine_ik'
+  - id: instruments
+    match: 'instruments'
+  - id: twitter_status
+    match: 'twitter_status'
+  - id: twitterescaped
+    match: 'twitterescaped'
+  - id: payload-large
+    match: 'payload-large'
+  - id: random
+    match: 'random'
+
+# each category renders as one chart on the page
+categories:
+  - id: openapi
+    title: 'OpenAPI specs — go-openapi/azure (long descriptions, short keys)'
+    includes:
+      functions: [lexers]
+      versions: [L, VL, easyjson, jsontext]
+      contexts: [azure_swagger, azure_swagger.pretty]
+      metrics: [MBytesPerS]
+  - id: numbers
+    title: 'Number-heavy — coordinates, meshes, pure numbers'
+    includes:
+      functions: [lexers]
+      versions: [L, VL, easyjson, jsontext]
+      contexts: [canada_geometry, mesh, mesh.pretty, numbers]
+      metrics: [MBytesPerS]
+  - id: strings
+    title: 'String & document-heavy — API / text payloads'
+    includes:
+      functions: [lexers]
+      versions: [L, VL, easyjson, jsontext]
+      contexts: [gsoc-2018, github_events, update-center, apache_builds]
+      metrics: [MBytesPerS]
+  - id: structured
+    title: 'Structured & mixed — catalogs, ASTs, records'
+    includes:
+      functions: [lexers]
+      versions: [L, VL, easyjson, jsontext]
+      contexts: [citm_catalog, golang_source, marine_ik, instruments]
+      metrics: [MBytesPerS]
+  - id: social-edge
+    title: 'Social, mixed & edge cases'
+    includes:
+      functions: [lexers]
+      versions: [L, VL, easyjson, jsontext]
+      contexts: [twitter_status, twitterescaped, payload-large, random]
+      metrics: [MBytesPerS]

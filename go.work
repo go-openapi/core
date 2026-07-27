@@ -1,0 +1,8 @@
+go 1.25.0
+
+use (
+	.
+	./json
+	./json/lexers/default-lexer/internal/strscan/_asm
+	./json/lexers/yaml-lexer
+)

@@ -1,0 +1,23 @@
+oos: linux
+goarch: amd64
+pkg: github.com/fredbi/core/json/writers/default-writer
+cpu: AMD Ryzen 7 5800X 8-Core Processor             
+BenchmarkProfile
+BenchmarkProfile/with_unbuffered
+BenchmarkProfile/with_unbuffered/writer_profile_with_math/big_values
+BenchmarkProfile/with_unbuffered/writer_profile_with_math/big_values-16         	 3049725	      3861 ns/op	     485 B/op	      10 allocs/op
+BenchmarkProfile/with_unbuffered/writer_profile_without_math/big_values
+BenchmarkProfile/with_unbuffered/writer_profile_without_math/big_values-16      	 3872318	      3070 ns/op	       4 B/op	       0 allocs/op
+BenchmarkProfile/with_buffered
+BenchmarkProfile/with_buffered/writer_profile_with_math/big_values
+BenchmarkProfile/with_buffered/writer_profile_with_math/big_values-16           	 3663585	      3263 ns/op	     548 B/op	      10 allocs/op
+BenchmarkProfile/with_buffered/writer_profile_without_math/big_values
+BenchmarkProfile/with_buffered/writer_profile_without_math/big_values-16        	 4877696	      2460 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProfile/with_indented
+BenchmarkProfile/with_indented/writer_profile_with_math/big_values
+BenchmarkProfile/with_indented/writer_profile_with_math/big_values-16           	 2877007	      4122 ns/op	     613 B/op	      10 allocs/op
+BenchmarkProfile/with_indented/writer_profile_without_math/big_values
+BenchmarkProfile/with_indented/writer_profile_without_math/big_values-16        	 3711690	      3229 ns/op	      22 B/op	       0 allocs/op
+PASS
+ok  	github.com/fredbi/core/json/writers/default-writer	71.486s
+

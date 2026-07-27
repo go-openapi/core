@@ -1,0 +1,85 @@
+# benchviz configuration — JSON writers (default-writer) vs easyjson jwriter.
+#
+# Renders a single horizontal bar chart of output throughput (MB/s) with the four
+# implementations shown side by side for each corpus workload.
+#
+# Regenerate the chart:
+#   benchviz -c benchviz.yaml -png -o throughput.png benchmark.txt
+#
+# Regenerate the data (median of 6 runs, 2MB variant excluded) — see README.md.
+name: JSON writers vs easyjson
+environment: ''
+
+render:
+  title: 'default-writer vs easyjson'
+  theme: vintage
+  chart: barchart
+  legend: bottom
+  scale: auto
+  orientation: horizontal
+  layout:
+    horizontal: 1
+  screenshot:
+    width: 1280
+    height: 720
+    sleep: 2s
+
+metrics:
+  - id: MBytesPerS
+    title: Throughput
+    axis: 'MB/s'
+
+functions:
+  - id: writers
+    title: Writers
+    match: 'Writers'
+
+# one bar group per corpus workload
+contexts:
+  - id: canada
+    title: canada_geometry
+    match: 'canada_geometry'
+  - id: citm
+    title: citm_catalog
+    match: 'citm_catalog'
+  - id: golang
+    title: golang_source
+    match: 'golang_source'
+  - id: twitter
+    title: twitter_status
+    match: 'twitter_status'
+
+# one bar (series) per implementation, shown side by side
+versions:
+  - id: unbuffered
+    title: our-unbuffered
+    match: 'our-unbuffered'
+  - id: buffered
+    title: our-buffered
+    match: 'our-buffered'
+    notmatch: '2MB'
+  - id: yaml
+    title: our-yaml
+    match: 'our-yaml'
+  - id: easyjson
+    title: easyjson
+    match: 'easyjson'
+
+categories:
+  - id: throughput
+    title: '{metric} — JSON writers vs easyjson (MB/s, higher is better)'
+    includes:
+      functions:
+        - writers
+      versions:
+        - unbuffered
+        - buffered
+        - yaml
+        - easyjson
+      contexts:
+        - canada
+        - citm
+        - golang
+        - twitter
+      metrics:
+        - MBytesPerS
