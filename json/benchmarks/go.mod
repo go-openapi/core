@@ -1,7 +1,7 @@
 module github.com/go-openapi/core/json/benchmarks
 
 // benchmarks require go1.26 (go-json-experiment)
-go 1.26
+go 1.26.0
 
 require (
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68
