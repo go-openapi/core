@@ -127,7 +127,7 @@ func (l *Lexer) Tokens() iter.Seq[token.T] {
 
 // Offset yields the number of bytes consumed so far.
 func (l *Lexer) Offset() uint64 {
-	return uint64(l.dec.InputOffset())
+	return uint64(l.dec.InputOffset()) //nolint:gosec // G1115 false positive
 }
 
 // IndentLevel yields the current nesting depth of containers (approximate).

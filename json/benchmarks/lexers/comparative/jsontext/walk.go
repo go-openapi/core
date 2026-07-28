@@ -17,18 +17,19 @@ package jsontext
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 
 	"github.com/go-json-experiment/json/jsontext"
 )
 
-// Sink prevents the compiler from eliminating the walk.
-var Sink int
-
 // Walk fully tokenizes data with the jsontext decoder, draining every token to
 // EOF. Numbers are validated but never converted (no native value is built).
 // Returns the first non-EOF error.
 func Walk(data []byte) error {
+	// sink prevents the compiler from eliminating the walk.
+	var sink int
+
 	dec := jsontext.NewDecoder(bytes.NewBuffer(data))
 	for {
 		tok, err := dec.ReadToken()
@@ -37,8 +38,10 @@ func Walk(data []byte) error {
 				return nil
 			}
 
+			fmt.Fprint(io.Discard, sink)
+
 			return err
 		}
-		Sink += int(tok.Kind())
+		sink += int(tok.Kind())
 	}
 }

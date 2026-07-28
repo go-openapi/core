@@ -16,6 +16,7 @@ package lane
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"iter"
 	"testing"
@@ -24,8 +25,6 @@ import (
 	"github.com/go-openapi/core/json/lexers/token"
 	"github.com/go-openapi/core/json/testdata/workloads"
 )
-
-var azureSink int
 
 // laneLexer is the surface both L and VL expose, so one pair of drain helpers serves
 // every lane regardless of lexer or input mode.
@@ -38,12 +37,15 @@ type laneLexer interface {
 }
 
 func drainPush(lx laneLexer) {
+	var azureSink int
 	for t := range lx.Tokens() {
 		azureSink += int(t.Kind())
 	}
+	fmt.Fprint(io.Discard, azureSink)
 }
 
 func drainPull(lx laneLexer) {
+	var azureSink int
 	for {
 		t := lx.NextToken()
 		if !lx.Ok() || t.Kind() == token.EOF {
@@ -51,6 +53,7 @@ func drainPull(lx laneLexer) {
 		}
 		azureSink += int(t.Kind())
 	}
+	fmt.Fprint(io.Discard, azureSink)
 }
 
 func runBuffer(b *testing.B, data []byte, lx laneLexer, drain func(laneLexer)) {

@@ -21,7 +21,7 @@ var additionCorpusFS embed.FS
 // decompressed in memory. These complement the synthetic workloads from [All]
 // with documents whose shapes mirror production payloads.
 func Corpus() ([]Workload, error) {
-	entries, err := corpusFS.ReadDir("testdata")
+	entries, err := corpusFS.ReadDir("standard")
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func Corpus() ([]Workload, error) {
 			continue
 		}
 
-		data, err := readGzip(path.Join("testdata", name))
+		data, err := readGzip(path.Join("standard", name))
 		if err != nil {
 			return nil, fmt.Errorf("loading corpus %s: %w", name, err)
 		}

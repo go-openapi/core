@@ -10,10 +10,12 @@
 // allocation but rewrites escapes in place, corrupting a reused fixture).
 package easyjson
 
-import "github.com/mailru/easyjson/jlexer"
+import (
+	"fmt"
+	"io"
 
-// Sink prevents the compiler from eliminating the walk.
-var Sink int
+	"github.com/mailru/easyjson/jlexer"
+)
 
 // Walk fully tokenizes data with jlexer, descending into every container, taking
 // numbers as raw bytes (no numeric conversion). Returns the lexer error.
@@ -34,22 +36,25 @@ func walk(data []byte, convertNumbers bool) error {
 }
 
 func walkValue(l *jlexer.Lexer, convertNumbers bool) {
+	// sink prevents the compiler from eliminating the walk.
+	var sink int
+
 	switch l.CurrentToken() {
 	case jlexer.TokenString:
-		Sink += len(l.String())
+		sink += len(l.String())
 
 	case jlexer.TokenNumber:
 		if convertNumbers {
 			if l.Float64() != 0 { // validates via strconv.ParseFloat (lossy)
-				Sink++
+				sink++
 			}
 		} else {
-			Sink += len(l.Raw()) // raw bytes, no numeric conversion
+			sink += len(l.Raw()) // raw bytes, no numeric conversion
 		}
 
 	case jlexer.TokenBool:
 		if l.Bool() {
-			Sink++
+			sink++
 		}
 
 	case jlexer.TokenNull:
@@ -60,7 +65,7 @@ func walkValue(l *jlexer.Lexer, convertNumbers bool) {
 		case l.IsDelim('{'):
 			l.Delim('{')
 			for l.Ok() && !l.IsDelim('}') {
-				Sink += len(l.String()) // key
+				sink += len(l.String()) // key
 				l.WantColon()
 				walkValue(l, convertNumbers)
 				l.WantComma()
@@ -78,4 +83,6 @@ func walkValue(l *jlexer.Lexer, convertNumbers bool) {
 
 	default: // TokenUndef
 	}
+
+	fmt.Fprint(io.Discard, sink)
 }

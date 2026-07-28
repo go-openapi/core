@@ -1,6 +1,8 @@
 package lane
 
 import (
+	"fmt"
+	"io"
 	"testing"
 
 	deflex "github.com/go-openapi/core/json/lexers/default-lexer"
@@ -17,17 +19,21 @@ func implementations() []impl {
 	return []impl{
 		// our semantic lexer L: fast-path scan, decodes strings, elides separators.
 		{name: "L-semantic", run: func(data []byte) {
+			var sink int
 			lx := deflex.NewWithBytes(data)
 			for tok := range lx.Tokens() {
 				sink += int(tok.Kind())
 			}
+			fmt.Fprint(io.Discard, sink)
 		}},
 		// our verbatim lexer VL: keeps strings raw, tracks blanks + line/column.
 		{name: "VL-verbatim", run: func(data []byte) {
+			var sink int
 			lx := deflex.NewVerbatimWithBytes(data)
 			for tok := range lx.Tokens() {
 				sink += int(tok.Kind())
 			}
+			fmt.Fprint(io.Discard, sink)
 		}},
 		// mailru/easyjson jlexer (our design's inspiration): recursive walk.
 		{name: "easyjson", run: func(data []byte) { _ = easyjsonWalk(data) }},
@@ -79,12 +85,14 @@ func TestWalkersAgree(t *testing.T) {
 			}
 			lx := deflex.NewWithBytes(wl.Data)
 			for range lx.Tokens() {
+				continue
 			}
 			if err := lx.Err(); err != nil {
 				t.Errorf("L: %v", err)
 			}
 			vl := deflex.NewVerbatimWithBytes(wl.Data)
 			for range vl.Tokens() {
+				continue
 			}
 			if err := vl.Err(); err != nil {
 				t.Errorf("VL: %v", err)

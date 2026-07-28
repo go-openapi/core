@@ -1,18 +1,20 @@
 package comparative
 
 import (
+	"fmt"
+	"io"
 	"testing"
 
 	deflex "github.com/go-openapi/core/json/lexers/default-lexer"
 	"github.com/go-openapi/core/json/testdata/workloads"
 )
 
-// sink prevents the compiler from eliminating the token-walk loops.
-var sink int
-
 // BenchmarkIterator compares the manual NextToken loop against the Tokens()
 // range iterator (the wrapper implementation), on the default-lexer.
 func BenchmarkIterator(b *testing.B) {
+	// sink prevents the compiler from eliminating the token-walk loops.
+	var sink int
+
 	suite, err := workloads.Suite()
 	if err != nil {
 		b.Fatalf("loading workloads: %v", err)
@@ -55,4 +57,6 @@ func BenchmarkIterator(b *testing.B) {
 			})
 		})
 	}
+
+	fmt.Fprint(io.Discard, sink)
 }

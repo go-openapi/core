@@ -1,6 +1,8 @@
 package comparative
 
 import (
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -74,6 +76,7 @@ func drain(lex jlex.Lexer) (int, error) {
 // on every implementation, otherwise a benchmark could silently time a partial
 // or errored scan.
 func TestWorkloadsLex(t *testing.T) {
+	var sink int
 	suite, err := workloads.Suite()
 	if err != nil {
 		t.Fatalf("loading workloads: %v", err)
@@ -131,9 +134,12 @@ func TestWorkloadsLex(t *testing.T) {
 			}
 		}
 	}
+
+	fmt.Fprint(io.Discard, sink)
 }
 
 func BenchmarkLexers(b *testing.B) {
+	var sink int
 	suite, err := workloads.Suite()
 	if err != nil {
 		b.Fatalf("loading workloads: %v", err)
@@ -270,4 +276,6 @@ func BenchmarkLexers(b *testing.B) {
 			}
 		})
 	}
+
+	fmt.Fprint(io.Discard, sink)
 }

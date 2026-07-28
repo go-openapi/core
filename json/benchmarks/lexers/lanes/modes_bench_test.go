@@ -10,7 +10,7 @@ package lane
 //	L/reader/push   Tokens() over a reader falls through to the NextToken loop
 //	                (iterator.go:47) — pull + a range-over-func closure, NOT a
 //	                distinct optimized path; expected ≈ L/reader/pull
-//	L/reader/pull   scanTokenStreamG (§10.3 streaming fast paths)
+//	scanTokenStreamG (§10.3 streaming fast paths)
 //	VL/...          same four with the verbatim policy (blanks + line/col baked in)
 //
 // Fairness: each lexer is constructed ONCE and Reset per iteration (buffer aliases
@@ -21,6 +21,8 @@ package lane
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"testing"
 
 	lexer "github.com/go-openapi/core/json/lexers/default-lexer"
@@ -28,16 +30,14 @@ import (
 	"github.com/go-openapi/core/json/testdata/workloads"
 )
 
-var modeSink int
-
 func BenchmarkLexerModes(b *testing.B) {
+	var modeSink int
 	suite, err := workloads.Corpus()
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	for _, wl := range suite {
-		wl := wl
 		data := wl.Data
 
 		b.Run(wl.Name, func(b *testing.B) {
@@ -180,4 +180,6 @@ func BenchmarkLexerModes(b *testing.B) {
 			})
 		})
 	}
+
+	fmt.Fprint(io.Discard, modeSink)
 }

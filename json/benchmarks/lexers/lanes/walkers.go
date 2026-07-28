@@ -1,4 +1,7 @@
-// Package benchmark compares the tokenization throughput of the in-repo
+// Package lane prepares a benchmark on a single workload, but many execution paths (lanes)
+// for our lexer.
+//
+// It compares the tokenization throughput of the in-repo
 // default-lexer — both the semantic lexer (L) and the verbatim lexer (VL) —
 // against two external JSON tokenizers: mailru/easyjson's jlexer (the lexer our
 // design is inspired from) and go-json-experiment's jsontext (encoding/json/v2),
@@ -10,14 +13,12 @@ package lane
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/mailru/easyjson/jlexer"
 )
-
-// sink prevents the compiler from eliminating a walk.
-var sink int
 
 // easyjsonWalk fully tokenizes data with jlexer as a generic recursive walk,
 // descending into every container. Numbers are taken via Raw() (raw sub-slice, no
@@ -31,6 +32,9 @@ func easyjsonWalk(data []byte) error {
 }
 
 func easyjsonValue(l *jlexer.Lexer) {
+	// sink prevents the compiler from eliminating a walk.
+	var sink int
+
 	switch l.CurrentToken() {
 	case jlexer.TokenString:
 		sink += len(l.String())
@@ -63,12 +67,14 @@ func easyjsonValue(l *jlexer.Lexer) {
 		}
 	default: // TokenUndef
 	}
+	fmt.Fprint(io.Discard, sink)
 }
 
 // jsontextWalk fully tokenizes data with the go-json-experiment jsontext decoder,
 // draining every token to EOF. Numbers are validated but never converted (no
 // native value is built) — the closest peer to the default-lexer.
 func jsontextWalk(data []byte) error {
+	var sink int
 	dec := jsontext.NewDecoder(bytes.NewBuffer(data))
 	for {
 		tok, err := dec.ReadToken()
@@ -76,6 +82,8 @@ func jsontextWalk(data []byte) error {
 			if err == io.EOF {
 				return nil
 			}
+
+			fmt.Fprint(io.Discard, sink)
 
 			return err
 		}

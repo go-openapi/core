@@ -2,6 +2,8 @@ package comparative
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"testing"
 
 	deflex "github.com/go-openapi/core/json/lexers/default-lexer"
@@ -51,6 +53,7 @@ func drainL(lex *deflex.L) int {
 //	go test -run '^$' -bench 'BenchmarkProfile/bytes/new-per-op' \
 //	    -benchmem -cpuprofile /tmp/cpu_bytes.out -memprofile /tmp/mem_bytes.out ./lexers/
 func BenchmarkProfile(b *testing.B) {
+	var sink int
 	data := profileFixture(b)
 
 	b.Run("bytes", func(b *testing.B) {
@@ -99,4 +102,6 @@ func BenchmarkProfile(b *testing.B) {
 			}
 		})
 	})
+
+	fmt.Fprint(io.Discard, sink)
 }
