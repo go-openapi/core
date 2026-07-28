@@ -248,11 +248,17 @@ func (w *Indented) Number(v any) {
 }
 
 func (w *Indented) redeem() {
-	// redeemBuffered is NOT cleared: a recycled Indented keeps reusing the same inner *Buffered across
-	// Borrow/Redeem cycles, so the handle must survive to redeem the working buffer next time.
-	if w.redeemBuffered != nil { // hydrated when borrowing from a pool; nil when created with New
-		RedeemBuffered(w.redeemBuffered)
+	if w.redeemBuffered == nil { // created with New: there is no borrowed inner writer to give back
+		return
 	}
+
+	// Give the inner Buffered back to its pool and drop EVERY alias to it. Past Redeem the
+	// instance may be handed to another borrower, so keeping w.Buffered (or w.redeemBuffered)
+	// would be a use-after-redeem, and the next RedeemIndented would redeem it twice.
+	// BorrowIndented therefore borrows a fresh inner Buffered on every cycle.
+	RedeemBuffered(w.redeemBuffered)
+	w.redeemBuffered = nil
+	w.Buffered = nil
 }
 
 func (w *Indented) releaseHold(wantIndent bool) {

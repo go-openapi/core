@@ -76,21 +76,14 @@ func BorrowIndented(writer io.Writer, opts ...IndentedOption) *Indented {
 	w := poolOfIndented.Borrow()
 	w.indentedOptions = indentedOptionsWithDefaults(opts)
 
-	if w.Buffered == nil {
-		// this is a new Indented: we need to borrow the inner Buffered
-		w.Buffered = BorrowBuffered(writer, w.applyBufferedOptions...)
-		w.redeemBuffered = w.Buffered // mark for redemption later on
-
-		return w
-	}
-
-	// this is a recycled Indented: reuse the inner Buffered, re-apply options, borrow a fresh buffer
-	w.Buffered.Reset()
-	w.bufferedOptions = bufferedOptionsWithDefaults(w.applyBufferedOptions)
-	w.borrowBuffer()
-
-	// set the new underlying writer for this recycled instance
-	w.w = writer
+	// The inner Buffered is borrowed for exactly one Borrow/Redeem cycle: [Indented.redeem]
+	// hands it back to poolOfBuffered and clears the field, since holding on to a redeemed
+	// instance would let two owners share it. A leftover Buffered here can only come from a
+	// writer built with [NewIndented] and then passed to [RedeemIndented]: that one is not
+	// pool-managed (its working buffer is reclaimed by its own GC cleanup), so it is simply
+	// dropped by the assignment below.
+	w.Buffered = BorrowBuffered(writer, w.applyBufferedOptions...)
+	w.redeemBuffered = w.Buffered // mark for redemption later on
 
 	return w
 }
@@ -104,21 +97,14 @@ func BorrowYAML(writer io.Writer, opts ...YAMLOption) *YAML {
 	w := poolOfYAML.Borrow()
 	w.yamlOptions = yamlOptionsWithDefaults(opts)
 
-	if w.Buffered == nil {
-		// this is a new YAML: we need to borrow the inner Buffered
-		w.Buffered = BorrowBuffered(writer, w.applyBufferedOptions...)
-		w.redeemBuffered = w.Buffered // mark for redemption later on
-
-		return w
-	}
-
-	// this is a recycled YAML: reuse the inner Buffered, re-apply options, borrow a fresh buffer
-	w.Buffered.Reset()
-	w.bufferedOptions = bufferedOptionsWithDefaults(w.applyBufferedOptions)
-	w.borrowBuffer()
-
-	// set the new underlying writer for this recycled instance
-	w.w = writer
+	// The inner Buffered is borrowed for exactly one Borrow/Redeem cycle: [YAML.redeem] hands
+	// it back to poolOfBuffered and clears the field, since holding on to a redeemed instance
+	// would let two owners share it. A leftover Buffered here can only come from a writer built
+	// with [NewYAML] and then passed to [RedeemYAML]: that one is not pool-managed (its working
+	// buffer is reclaimed by its own GC cleanup), so it is simply dropped by the assignment
+	// below.
+	w.Buffered = BorrowBuffered(writer, w.applyBufferedOptions...)
+	w.redeemBuffered = w.Buffered // mark for redemption later on
 
 	return w
 }

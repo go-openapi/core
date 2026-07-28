@@ -1,4 +1,7 @@
-//go:build !race
+// Allocation counting needs an un-instrumented build: the race detector and the pools
+// tracker (poolsdebug) both allocate per borrow, which would swamp the amortized counts
+// these tests assert.
+//go:build !race && !poolsdebug
 
 package writer
 

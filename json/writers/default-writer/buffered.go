@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"runtime"
+	"sync"
 	"unicode/utf8"
 	"unsafe"
 
@@ -53,15 +54,40 @@ func NewBuffered(w io.Writer, opts ...BufferedOption) *Buffered {
 	writer.borrowBuffer()
 	writer.jw = &writer.buffered
 
-	// On the New path the working buffer is relinquished to the pool when the gc claims the writer.
-	// (The Borrow path redeems it explicitly via RedeemBuffered.)
-	runtime.AddCleanup(writer, func(redeem func()) {
-		if redeem != nil {
-			redeem()
-		}
-	}, writer.redeemBuffer)
+	// On the New path the working buffer is relinquished to the pool when the gc claims the
+	// writer. (The Borrow path redeems it explicitly via RedeemBuffered.)
+	//
+	// Both paths may fire for the same writer — nothing stops a caller from handing a
+	// New-built writer to RedeemBuffered, and the cleanup may even run concurrently with that
+	// call, since a receiver may become unreachable at the last point a method mentions it.
+	// The pool's redeem closure panics when called twice, so it is wrapped in a one-shot: the
+	// first of the two paths returns the buffer, the second is a no-op.
+	release := &oneShotRelease{fn: writer.redeemBuffer}
+	writer.redeemBuffer = release.run
+	// the arg must not reference the writer, or it would keep it alive forever: oneShotRelease
+	// only holds the pool's own closure.
+	runtime.AddCleanup(writer, func(r *oneShotRelease) { r.run() }, release)
 
 	return writer
+}
+
+// oneShotRelease makes returning the working buffer to its pool idempotent, so the explicit
+// redeem path and the GC cleanup registered by [NewBuffered] cannot both return it (a double
+// redeem panics in the pool, and would hand the same buffer to two borrowers).
+//
+// It is a separate heap cell on purpose: a cleanup argument pointing into the writer would
+// keep the writer alive forever.
+type oneShotRelease struct {
+	once sync.Once
+	fn   func()
+}
+
+func (r *oneShotRelease) run() {
+	if r == nil || r.fn == nil {
+		return
+	}
+
+	r.once.Do(r.fn)
 }
 
 func (w *Buffered) Reset() {
