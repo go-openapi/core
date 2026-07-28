@@ -3,6 +3,7 @@ go 1.25.8
 use (
 	.
 	./json
+	./json/benchmarks
 	./json/lexers/default-lexer/internal/strscan/_asm
 	./json/lexers/yaml-lexer
 )

@@ -34,6 +34,7 @@ const (
 	ErrMaxContainerStack        LexerError = "circuit breaker stopped parsing JSON because the maximum depth of nested containers has been reached"
 	ErrMaxValueBytes            LexerError = "circuit breaker stopped parsing JSON because the maximum size for a string or number value has been reached"
 	ErrKeyColon                 LexerError = "object key must be followed by a :"
+	ErrColonValue               LexerError = "a : must be followed by a value"
 )
 
 // Error implements the error interface.

@@ -138,6 +138,11 @@ func scanPushStreamG[T any, P emitPolicy[T]](l *L, p P, yield func(T) bool) {
 
 					return
 				}
+				if l.current.IsColon() { // {"a":}
+					l.in.Err = codes.ErrColonValue
+
+					return
+				}
 				if !l.isInObject() {
 					l.in.Err = codes.ErrNotInObject
 

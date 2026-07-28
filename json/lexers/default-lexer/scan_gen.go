@@ -123,6 +123,12 @@ func scanTokenBufferSemantic(l *L, p semanticPolicy) token.T {
 
 				return p.none()
 			}
+			if l.current.IsColon() { // {"a":}
+				l.in.Err = codes.ErrColonValue
+				writeback(i + 1)
+
+				return p.none()
+			}
 			if !l.isInObject() {
 				l.in.Err = codes.ErrNotInObject
 				writeback(i + 1)
@@ -595,6 +601,11 @@ func scanTokenStreamSemantic(l *L, p semanticPolicy) token.T {
 
 					return p.none()
 				}
+				if l.current.IsColon() { // {"a":}
+					l.in.Err = codes.ErrColonValue
+
+					return p.none()
+				}
 				if !l.isInObject() {
 					l.in.Err = codes.ErrNotInObject
 
@@ -911,6 +922,12 @@ func scanPushSemanticCore(l *L, p semanticPolicy, yield func(token.T) bool) {
 		case closingBracket:
 			if l.current.IsComma() {
 				l.in.Err = codes.ErrTrailingComma
+				writeback(i + 1)
+
+				return
+			}
+			if l.current.IsColon() { // {"a":}
+				l.in.Err = codes.ErrColonValue
 				writeback(i + 1)
 
 				return
@@ -1395,6 +1412,11 @@ func scanPushStreamSemanticCore(l *L, p semanticPolicy, yield func(token.T) bool
 
 					return
 				}
+				if l.current.IsColon() { // {"a":}
+					l.in.Err = codes.ErrColonValue
+
+					return
+				}
 				if !l.isInObject() {
 					l.in.Err = codes.ErrNotInObject
 
@@ -1777,6 +1799,12 @@ func scanTokenBufferVerbatim(l *L, p verbatimPolicy) token.T {
 		case closingBracket:
 			if l.current.IsComma() {
 				l.in.Err = codes.ErrTrailingComma
+				writeback(i + 1)
+
+				return p.none()
+			}
+			if l.current.IsColon() { // {"a":}
+				l.in.Err = codes.ErrColonValue
 				writeback(i + 1)
 
 				return p.none()
@@ -2253,6 +2281,11 @@ func scanTokenStreamVerbatim(l *L, p verbatimPolicy) token.T {
 
 					return p.none()
 				}
+				if l.current.IsColon() { // {"a":}
+					l.in.Err = codes.ErrColonValue
+
+					return p.none()
+				}
 				if !l.isInObject() {
 					l.in.Err = codes.ErrNotInObject
 
@@ -2569,6 +2602,12 @@ func scanPushVerbatimCore(l *L, p verbatimPolicy, yield func(token.T) bool) {
 		case closingBracket:
 			if l.current.IsComma() {
 				l.in.Err = codes.ErrTrailingComma
+				writeback(i + 1)
+
+				return
+			}
+			if l.current.IsColon() { // {"a":}
+				l.in.Err = codes.ErrColonValue
 				writeback(i + 1)
 
 				return
@@ -3050,6 +3089,11 @@ func scanPushStreamVerbatimCore(l *L, p verbatimPolicy, yield func(token.T) bool
 			case closingBracket:
 				if l.current.IsComma() {
 					l.in.Err = codes.ErrTrailingComma
+
+					return
+				}
+				if l.current.IsColon() { // {"a":}
+					l.in.Err = codes.ErrColonValue
 
 					return
 				}

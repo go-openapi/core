@@ -125,6 +125,11 @@ func TestYAMLGolden(t *testing.T) {
 		{"tag-str-coerces", `v: !!str 7`, []string{"D:{", "K:v", "S:7", "D:}"}},
 		{"tag-bool-coerces", `v: !!bool yes`, []string{"D:{", "K:v", "B:true", "D:}"}},
 		{"numeric-key-coerced", "123: ok", []string{"D:{", "K:123", "S:ok", "D:}"}},
+		// An empty node is a legal YAML value and resolves to null. This is NOT a JSON
+		// subset violation: the same bytes are invalid JSON, and L rejects them with
+		// codes.ErrColonValue, so the differential contract never covers them.
+		{"empty-flow-value-is-null", `{"0":}`, []string{"D:{", "K:0", "null", "D:}"}},
+		{"empty-block-value-is-null", "v:", []string{"D:{", "K:v", "null", "D:}"}},
 		// D5 merge keys
 		{
 			"merge-simple",

@@ -548,6 +548,11 @@ func TestGrammar(t *testing.T) {
 	t.Run("should be incorrect", shouldBeIncorrect(`[{},null {}]`, codes.ErrInvalidToken))
 	t.Run("should be incorrect", shouldBeIncorrect(`{"x":{},}`, codes.ErrTrailingComma))
 	t.Run("should be incorrect", shouldBeIncorrect(`{"x":{},"y"}`, codes.ErrKeyColon))
+	t.Run("should be incorrect", shouldBeIncorrect(`{"x":}`, codes.ErrColonValue))
+	t.Run("should be incorrect", shouldBeIncorrect(`{"x" : }`, codes.ErrColonValue))
+	t.Run("should be incorrect", shouldBeIncorrect(`{"x":1,"y":}`, codes.ErrColonValue))
+	t.Run("should be incorrect", shouldBeIncorrect(`{"x":{"y":}}`, codes.ErrColonValue))
+	t.Run("should be incorrect", shouldBeIncorrect(`[{"x":}]`, codes.ErrColonValue))
 }
 
 func shouldBeCorrect(s string) func(*testing.T) {

@@ -120,6 +120,12 @@ func scanPushG[T any, P emitPolicy[T]](l *L, p P, yield func(T) bool) {
 
 				return
 			}
+			if l.current.IsColon() { // {"a":}
+				l.in.Err = codes.ErrColonValue
+				writeback(i + 1)
+
+				return
+			}
 			if !l.isInObject() {
 				l.in.Err = codes.ErrNotInObject
 				writeback(i + 1)

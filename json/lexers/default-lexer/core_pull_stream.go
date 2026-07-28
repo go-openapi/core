@@ -137,6 +137,11 @@ func scanTokenStreamG[T any, P emitPolicy[T]](l *L, p P) T {
 
 					return p.none()
 				}
+				if l.current.IsColon() { // {"a":}
+					l.in.Err = codes.ErrColonValue
+
+					return p.none()
+				}
 				if !l.isInObject() {
 					l.in.Err = codes.ErrNotInObject
 

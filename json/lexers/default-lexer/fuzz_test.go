@@ -24,12 +24,20 @@ package lexer
 //   5. Verbatim round-trip: for any ACCEPTED input, reassembling the raw VL token
 //      stream (leading blanks + verbatim token text) reproduces the input byte for
 //      byte — the defining property of the verbatim lexer.
+//   6. Well-formed on accept: an ACCEPTED token stream obeys the JSON grammar
+//      (balanced and correctly typed containers, keys only in object key slots,
+//      key/value alternation, exactly one root value). The lexers are "almost a
+//      parser" (see DESIGN.md §5), so accepting a stream that no JSON parser could
+//      build a document from is a bug — this is what caught `{"a":}`, which every
+//      lane used to accept in agreement.
 //
 // Run the seeds:   go test -run FuzzLexer
 // Fuzz:            go test -run '^$' -fuzz FuzzLexer -fuzztime 60s
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"iter"
 	"strings"
 	"testing"
@@ -167,6 +175,89 @@ func fzSameStream(
 			)
 		}
 	}
+}
+
+// fzWellFormed checks that an ACCEPTED token stream obeys the JSON grammar. Separators are
+// skipped (L elides them, VL emits them), so the same check runs over either lexer's
+// stream: the document structure is carried by the container, key and value tokens.
+func fzWellFormed(toks []fzTok) error {
+	type frame struct {
+		obj       bool
+		expectKey bool // in an object, the next non-closing token must be a key
+	}
+	var (
+		st       []frame
+		rootDone bool
+	)
+
+	consumeValue := func() error {
+		if len(st) == 0 {
+			if rootDone {
+				return errors.New("second root value")
+			}
+			rootDone = true
+
+			return nil
+		}
+		top := &st[len(st)-1]
+		if top.obj {
+			if top.expectKey {
+				return errors.New("value where an object key was expected")
+			}
+			top.expectKey = true // the pair is complete
+		}
+
+		return nil
+	}
+
+	for i, tk := range toks {
+		switch {
+		case tk.kind == token.EOF:
+			continue
+		case tk.kind == token.Delimiter &&
+			(tk.delim == token.Comma || tk.delim == token.Colon):
+			continue // separators carry no structure here
+		case tk.kind == token.Key:
+			if len(st) == 0 || !st[len(st)-1].obj || !st[len(st)-1].expectKey {
+				return fmt.Errorf("token %d: key outside a key slot", i)
+			}
+			st[len(st)-1].expectKey = false
+		case tk.kind == token.Delimiter && tk.delim == token.OpeningBracket:
+			if err := consumeValue(); err != nil {
+				return err
+			}
+			st = append(st, frame{obj: true, expectKey: true})
+		case tk.kind == token.Delimiter && tk.delim == token.OpeningSquareBracket:
+			if err := consumeValue(); err != nil {
+				return err
+			}
+			st = append(st, frame{obj: false})
+		case tk.kind == token.Delimiter && tk.delim == token.ClosingBracket:
+			// expectKey is false only after a key whose value never came ({"a":}).
+			if len(st) == 0 || !st[len(st)-1].obj || !st[len(st)-1].expectKey {
+				return fmt.Errorf("token %d: mismatched } (or a key with no value)", i)
+			}
+			st = st[:len(st)-1]
+		case tk.kind == token.Delimiter && tk.delim == token.ClosingSquareBracket:
+			if len(st) == 0 || st[len(st)-1].obj {
+				return fmt.Errorf("token %d: mismatched ]", i)
+			}
+			st = st[:len(st)-1]
+		default: // a scalar value
+			if err := consumeValue(); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(st) != 0 {
+		return fmt.Errorf("unbalanced containers: %d still open", len(st))
+	}
+	if !rootDone {
+		return errors.New("no root value")
+	}
+
+	return nil
 }
 
 // fzSourceText reconstructs the exact source bytes of a verbatim token. VL keeps string
@@ -347,6 +438,18 @@ func FuzzLexer(f *testing.F) {
 				vPullErr,
 				data,
 			)
+		}
+
+		// --- an accepted stream must be a well-formed JSON document ---
+		if lPullErr == nil {
+			if err := fzWellFormed(lPull); err != nil {
+				t.Fatalf("L accepted an ill-formed stream: %v\ninput=%q", err, data)
+			}
+		}
+		if vPullErr == nil {
+			if err := fzWellFormed(vPull); err != nil {
+				t.Fatalf("VL accepted an ill-formed stream: %v\ninput=%q", err, data)
+			}
 		}
 
 		// --- verbatim round-trip on accepted input ---
