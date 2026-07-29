@@ -29,6 +29,7 @@ import (
 //
 //nolint:dupl // the structure is the same but differs subtly and its critical that the inside remains inlined.
 func (in *Input) consumeStringRawWhole() token.T {
+	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 	start := in.Consumed
@@ -94,12 +95,88 @@ func (in *Input) consumeStringRawWhole() token.T {
 	return in.consumeStringRawEscaped(start, i)
 }
 
+func (in *Input) consumeStringRawWholeV() token.T {
+	data := in.Buffer
+	n := in.Bufferized
+	start := in.Consumed
+
+	i := start
+	var hi uint64
+	guard := start + guessLong
+	if in.NoAVX2 {
+		guard = n + 1 // WithoutAVX2: never delegate, pure inline SWAR (see consumeStringWhole)
+	}
+	for i+8 <= n {
+		w := binary.LittleEndian.Uint64(data[i:])
+		hi |= w
+		if m := swar.StringStopMask(w); m != 0 {
+			i += swar.FirstByte(m)
+
+			break
+		}
+		i += 8
+		if i >= guard {
+			break
+		}
+	}
+	// clean past guessLong → guess long, AVX2 scan of the rest (same heuristic and out-of-loop placement as
+	// consumeStringWhole).
+	if i >= guard && i+8 <= n {
+		if c := data[i]; c != doubleQuote && c != escape && c >= controlCharsUpperBound {
+			i += strscan.ScanStop(data[i:n])
+			hi = ^uint64(0) // AVX2 region unaccumulated: force the check
+		}
+	}
+	for ; i < n; i++ {
+		c := data[i]
+		if c == doubleQuote || c == escape || c < controlCharsUpperBound {
+			break
+		}
+		hi |= uint64(c)
+	}
+	if i >= n {
+		in.Consumed, in.Offset = i, uint64(i)
+		in.Err = codes.ErrUnterminatedString
+
+		return token.None
+	}
+
+	switch c := data[i]; {
+	case c == doubleQuote:
+		// no escapes: raw == decoded, same aliasing exit as consumeStringWhole
+		if in.MaxValueBytes > 0 && i-start > in.MaxValueBytes {
+			in.Consumed, in.Offset = i, uint64(i)
+			in.Err = codes.ErrMaxValueBytes
+
+			return token.None
+		}
+		value := data[start:i:i]
+		i++
+		in.Consumed, in.Offset = i, uint64(i)
+		in.SawNonASCII = hi&swar.HighBits != 0
+
+		return in.finishStringValue(value)
+
+	case c < controlCharsUpperBound:
+		in.Consumed, in.Offset = i, uint64(i)
+		in.Err = codes.ErrControlChar
+
+		return token.None
+	}
+
+	// an escape was found at i: validate the rest but keep the raw bytes.
+	in.SawNonASCII = true
+
+	return in.consumeStringRawEscaped(start, i)
+}
+
 // consumeStringRawEscaped validates a string that contains at least one escape (data[i] == escape) without decoding it,
 // and returns the raw content aliased from the input.
 //
 // Clean runs between escapes are skipped with the same adaptive scalar-probe-then-SWAR scan the decoder uses
 // (consumeStringEscaped), but with no copying — so a sparse-escape string with a long clean tail stays fast.
 func (in *Input) consumeStringRawEscaped(start, i int) token.T {
+	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 
@@ -210,6 +287,7 @@ func (in *Input) consumeStringRawEscaped(start, i int) token.T {
 //
 //nolint:dupl // the structure is the same but differs subtly and its critical that the inside remains inlined.
 func (in *Input) consumeStringRawStreamFast() token.T {
+	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 	start := in.Consumed // first content byte (opening quote already consumed)
@@ -279,6 +357,7 @@ func (in *Input) consumeStringRawStreamFast() token.T {
 // consumeStringRawStreaming is the raw scan over a refilling buffer: it copies the source bytes verbatim (escapes
 // intact) into l.in.CurrentValue while validating them, so the value survives buffer turnover.
 func (in *Input) consumeStringRawStreaming() token.T {
+	in.SawNonASCII = true
 	in.CurrentValue = in.CurrentValue[:0]
 
 	for {

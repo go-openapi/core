@@ -11,6 +11,7 @@ type (
 		keepPreviousBuffer int
 		elideSeparator     bool
 		noAVX2             bool
+		validateMode       int
 		jsonPointer        bool
 	}
 )
@@ -85,6 +86,28 @@ func WithElideSeparator(enabled bool) Option {
 // shows the vector path is not paying off.
 //
 // It does not change the token stream, only how the scan is performed.
+// WithUTF8ValidationMode (PROTOTYPE) selects the UTF-8 validation strategy (see input.Validate* constants).
+func WithUTF8ValidationMode(mode int) Option {
+	return func(o options) options {
+		o.validateMode = mode
+
+		return o
+	}
+}
+
+// WithUTF8Validation (PROTOTYPE) enables RFC 7493 UTF-8 validation of string values.
+func WithUTF8Validation(enabled bool) Option {
+	return func(o options) options {
+		if enabled {
+			o.validateMode = 2
+		} else {
+			o.validateMode = 0
+		}
+
+		return o
+	}
+}
+
 func WithoutAVX2(disabled bool) Option {
 	return func(o options) options {
 		o.noAVX2 = disabled

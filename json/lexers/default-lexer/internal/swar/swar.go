@@ -32,6 +32,9 @@ const (
 // lowest set bit belongs to the lowest-address lane.
 func FirstByte(mask uint64) int { return bits.TrailingZeros64(mask) >> 3 }
 
+// HighBits is the high bit of every lane: a word OR-accumulated over a byte run is non-ASCII iff (acc & HighBits) != 0.
+const HighBits = high
+
 // Broadcast replicates b into all eight lanes of a word.
 func Broadcast(b byte) uint64 { return lo * uint64(b) }
 

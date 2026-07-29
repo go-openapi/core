@@ -41,4 +41,17 @@ type Input struct {
 	NoAVX2             bool
 	MaxValueBytes      int
 	KeepPreviousBuffer int
+
+	// ValidateMode (PROTOTYPE) selects the UTF-8 validation strategy.
+	ValidateMode int
+
+	// SawNonASCII (PROTOTYPE) reports whether the scan observed a byte >= 0x80 in the value just produced.
+	SawNonASCII bool
 }
+
+// UTF-8 validation strategies (PROTOTYPE).
+const (
+	ValidateOff   = 0 // current behavior: no validation
+	ValidateNaive = 1 // utf8.Valid over every string value at the funnel
+	ValidateFused = 2 // non-ASCII accumulated during the existing scan; utf8.Valid only when a high bit was seen
+)

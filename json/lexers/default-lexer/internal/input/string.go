@@ -52,6 +52,10 @@ const controlCharsUpperBound = 0x20 // ASCII control chars range
 func (in *Input) ConsumeString() token.T {
 	if in.TrackBlanks {
 		if in.WholeBuffer {
+			if in.ValidateMode == ValidateFused {
+				return in.consumeStringRawWholeV()
+			}
+
 			return in.consumeStringRawWhole()
 		}
 
@@ -59,10 +63,91 @@ func (in *Input) ConsumeString() token.T {
 	}
 
 	if in.WholeBuffer {
+		if in.ValidateMode == ValidateFused {
+			return in.consumeStringWholeV()
+		}
+
 		return in.consumeStringWhole()
 	}
 
 	return in.consumeStringStreamFast()
+}
+
+// consumeStringWholeV is consumeStringWhole with a fused non-ASCII accumulator: every SWAR word already loaded by the
+// stop-scan is OR-ed into hi, so a pure-ASCII string (the overwhelming majority) is proven valid UTF-8 with no second
+// pass and no call. Only a string that actually contains a byte >= 0x80 pays utf8.Valid.
+//
+// hi may over-report (the matching word's bytes past the stop are included, and the AVX2 region is not accumulated at
+// all) -- that is conservative: it can only trigger a redundant utf8.Valid, never skip a needed one.
+func (in *Input) consumeStringWholeV() token.T {
+	data := in.Buffer
+	n := in.Bufferized
+	start := in.Consumed
+
+	i := start
+	var hi uint64
+	guard := start + guessLong
+	if in.NoAVX2 {
+		guard = n + 1
+	}
+	for i+8 <= n {
+		w := binary.LittleEndian.Uint64(data[i:])
+		hi |= w
+		if m := swar.StringStopMask(w); m != 0 {
+			i += swar.FirstByte(m)
+
+			break
+		}
+		i += 8
+		if i >= guard {
+			break
+		}
+	}
+	if i >= guard && i+8 <= n {
+		if c := data[i]; c != doubleQuote && c != escape && c >= controlCharsUpperBound {
+			i += strscan.ScanStop(data[i:n])
+			hi = ^uint64(0) // AVX2 region unaccumulated: force the check
+		}
+	}
+	for ; i < n; i++ {
+		c := data[i]
+		if c == doubleQuote || c == escape || c < controlCharsUpperBound {
+			break
+		}
+		hi |= uint64(c)
+	}
+	if i >= n {
+		in.Consumed, in.Offset = i, uint64(i)
+		in.Err = codes.ErrUnterminatedString
+
+		return token.None
+	}
+
+	switch c := data[i]; {
+	case c == doubleQuote:
+		if in.MaxValueBytes > 0 && i-start > in.MaxValueBytes {
+			in.Consumed, in.Offset = i, uint64(i)
+			in.Err = codes.ErrMaxValueBytes
+
+			return token.None
+		}
+		value := data[start:i:i]
+		i++
+		in.Consumed, in.Offset = i, uint64(i)
+		in.SawNonASCII = hi&swar.HighBits != 0
+
+		return in.finishStringValue(value)
+
+	case c < controlCharsUpperBound:
+		in.Consumed, in.Offset = i, uint64(i)
+		in.Err = codes.ErrControlChar
+
+		return token.None
+	}
+
+	in.SawNonASCII = true
+
+	return in.consumeStringEscaped(start, i)
 }
 
 // consumeStringStreamFast is the streaming string fast path (§10.3 Phase 1).
@@ -81,6 +166,7 @@ func (in *Input) ConsumeString() token.T {
 //
 //nolint:dupl // the structure is the same but differs subtly and its critical that the inside remains inlined.
 func (in *Input) consumeStringStreamFast() token.T {
+	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 	start := in.Consumed // first content byte (opening quote already consumed)
@@ -157,6 +243,7 @@ func (in *Input) consumeStringStreamFast() token.T {
 //
 //nolint:dupl // the structure is the same but differs subtly and its critical that the inside remains inlined.
 func (in *Input) consumeStringWhole() token.T {
+	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 	start := in.Consumed // first content byte
@@ -243,6 +330,7 @@ func (in *Input) consumeStringWhole() token.T {
 // It copies that prefix then unescapes the rest; the loop invariant is that data[i] is the next "stop" byte (quote,
 // escape, or control) — clean runs between stops are copied in bulk rather than byte-by-byte.
 func (in *Input) consumeStringEscaped(start, i int) token.T {
+	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 
@@ -371,6 +459,21 @@ func (in *Input) consumeStringEscaped(start, i int) token.T {
 // finishStringValue turns a scanned string body into a Key (in object key position) or String token, handling the
 // trailing colon for keys.
 func (in *Input) finishStringValue(value []byte) token.T {
+	switch in.ValidateMode {
+	case ValidateNaive:
+		if !utf8.Valid(value) {
+			in.Err = codes.ErrInvalidRune
+
+			return token.None
+		}
+	case ValidateFused:
+		if in.SawNonASCII && !utf8.Valid(value) {
+			in.Err = codes.ErrInvalidRune
+
+			return token.None
+		}
+	}
+
 	if in.ExpectKey {
 		// the following colon is validated on the next scan (see in.AfterKey)
 		in.ExpectKey = false
@@ -383,6 +486,7 @@ func (in *Input) finishStringValue(value []byte) token.T {
 }
 
 func (in *Input) consumeStringStreaming() token.T {
+	in.SawNonASCII = true
 	var escapeSequence bool
 	in.CurrentValue = in.CurrentValue[:0]
 

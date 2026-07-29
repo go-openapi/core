@@ -226,6 +226,7 @@ func (l *L) reset() {
 	l.in.MaxValueBytes = l.maxValueBytes
 	l.in.KeepPreviousBuffer = l.keepPreviousBuffer
 	l.in.NoAVX2 = l.noAVX2
+	l.in.ValidateMode = l.validateMode
 	l.current = token.None
 	l.in.Offset = 0
 	l.in.Consumed = 0
