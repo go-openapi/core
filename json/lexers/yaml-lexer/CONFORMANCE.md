@@ -35,6 +35,51 @@ so there is nothing to compare — only the accept/reject verdict, which
 `testdata/conformance_recorded.golden` pins so out-of-scope cannot quietly become
 unnoticed regression.
 
+## How that compares to other implementations
+
+The [YAML Test Matrix](https://matrix.yaml.info/) publishes a **JSON output** comparison
+over the same suite — "is the loaded data equal to the `json` field" — which is the same
+question we ask. Its denominator is 401 (308 valid + 93 invalid).
+
+Our comparable slice is 366 cases (272 with a single-root JSON expectation + 94 invalid),
+scoring **289 → 79%**. Counting the 40 cases with no JSON equivalent as misses instead —
+a stricter reading — gives **289/406 → 71%**. So we sit somewhere in **71–79%** depending
+on how the out-of-scope cases are counted.
+
+| implementation | JSON comparison |
+|---|---|
+| C libfyaml | 93% |
+| JS yaml | 92% |
+| Perl YAML::PP | 92% |
+| Haskell HsYAML | 91% |
+| Python ruamel.yaml | 78% |
+| Perl YAML::PP+libyaml | 78% |
+| **`YL` (this lexer)** | **71–79%** |
+| JS js-yaml | 76% |
+| Ruby psych | 76% |
+| Go go-yaml | 76% |
+| Python PyYAML | 75% |
+| Perl YAML::XS | 75% |
+| Lua lyaml | 72% |
+| C# YamlDotNet | 64% |
+| Perl Syck / YAML.pm / YAML::Tiny | 52% / 44% / 31% |
+
+Read that carefully rather than as a ranking — three things make it not apples-to-apples:
+
+- **Different subject.** The matrix measures *loaders*: parse to a data structure, serialize
+  to JSON, compare. We measure a *lexer's token stream*. Ours is the narrower claim.
+- **We forfeit points by design.** Multi-document streams and complex keys are deliberately
+  unsupported, and they count against us here. A loader has no such excuse.
+- **Our floor is goccy's.** We are built on `goccy/go-yaml`, which the matrix does not test
+  (its `go-yaml` entry is a different project). 12 of our 54 divergences — the 9
+  over-permissive accepts and the 3 parse failures — are goccy's behavior, not ours, and we
+  cannot beat it without pre-validating ourselves.
+
+The useful takeaway: **we are in the same band as the mainstream loaders** (PyYAML, psych,
+go-yaml, ruamel, js-yaml) and clearly behind the four leaders. And the single biggest gap is
+ours to close: fixing resolved-scalar keys (group 1 below, 23 cases) would put the
+comparable slice at roughly **85%**, above every implementation in the middle band.
+
 ## The 54 divergences
 
 ### 1. Non-scalar mapping keys — 23 cases
@@ -118,8 +163,9 @@ header 6   indent 6   anchor 5   1.3-err 4   double 4   …
 In rough order of value per unit of effort:
 
 1. **Resolved-scalar keys** (group 1) — 23 cases, one coherent feature: resolve an
-   alias/anchor/tag on the key side and use the resulting scalar. Would take the
-   accept rate from 75% to roughly 82%.
+   alias/anchor/tag on the key side and use the resulting scalar. Takes the comparable
+   slice from 79% to **85%**, above every implementation in the matrix's middle band.
+   Adding groups 3 and 4 on top would reach **89%**, within reach of the leaders.
 2. **Over-permissiveness** (group 3) — 9 cases, and the only group where we accept
    documents we should reject. Worth confirming against goccy first.
 3. **Scalar resolution** (group 4) — 5 cases, each needing individual reading.
