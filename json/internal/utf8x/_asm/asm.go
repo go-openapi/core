@@ -1,0 +1,195 @@
+//nolint:revive,mnd
+package main
+
+import (
+	"github.com/mmcloughlin/avo/attr"
+	. "github.com/mmcloughlin/avo/build"
+	. "github.com/mmcloughlin/avo/operand"
+)
+
+func main() {
+	validateUTF8()
+
+	Generate()
+}
+
+// table16 emits a 16-byte read-only lookup table for VPSHUFB.
+//
+// VPSHUFB indexes within each 128-bit lane, so the table is broadcast into both lanes of a YMM at load time
+// (VBROADCASTI128) and one 16-byte copy is all that needs to live in rodata.
+func table16(name string, b ...byte) Mem {
+	if len(b) != 16 {
+		panic(name + ": a VPSHUFB table must be exactly 16 bytes")
+	}
+	m := GLOBL(name, attr.RODATA|attr.NOPTR)
+	for i, v := range b {
+		DATA(i, U8(v))
+	}
+
+	return m
+}
+
+// UTF-8 error classes of the Keiser-Lemire "lookup4" algorithm (simdutf
+// src/generic/utf8_validation/utf8_lookup4_algorithm.h). Each is one bit of a per-byte bitset; a byte is ill-formed
+// iff its three table lookups agree on at least one violated rule.
+const (
+	tooShort     = 1 << 0 // 11______ followed by 0_______ or 11______
+	tooLong      = 1 << 1 // 0_______ followed by 10______
+	overlong3    = 1 << 2 // 11100000 100_____
+	tooLarge     = 1 << 3 // above U+10FFFF
+	surrogate    = 1 << 4 // 11101101 101_____ : an encoded UTF-16 surrogate
+	overlong2    = 1 << 5 // 1100000_ 10______
+	tooLarge1000 = 1 << 6
+	overlong4    = 1 << 6 // 11110000 1000____ (shares the bit with tooLarge1000)
+	twoConts     = 1 << 7 // 10______ 10______
+
+	// carry marks the classes that depend only on the high nibble of the leading byte, so the low-nibble table must
+	// let them through.
+	carry = tooShort | tooLong | twoConts
+)
+
+// validateUTF8 emits the AVX2 UTF-8 validator: three VPSHUFB table lookups classify every (previous byte, byte) pair,
+// and a saturating-subtract pass asserts that positions requiring a 2nd or 3rd continuation byte have one.
+//
+// It deliberately does NOT handle a partial trailing block or the end-of-input "sequence left incomplete" check: the
+// Go caller re-validates the last few bytes scalar-ly from a sequence boundary (see ScanUTF8), which is both simpler
+// and how simdutf itself locates errors.
+func validateUTF8() {
+	TEXT("validateUTF8BlocksAVX2", NOSPLIT, "func(data []byte) bool")
+	Doc(
+		"validateUTF8BlocksAVX2 reports whether the whole 32-byte blocks of data are valid UTF-8, ignoring any sequence that continues past the end. len(data) must be a non-zero multiple of 32. AVX2, 32 bytes/iter.",
+	)
+	ptr := Load(Param("data").Base(), GP64())
+	n := Load(Param("data").Len(), GP64())
+
+	// byte_1_high: indexed by the HIGH nibble of the previous byte.
+	tableHigh := YMM()
+	VBROADCASTI128(table16(
+		"utf8t1h",
+		tooLong,
+		tooLong,
+		tooLong,
+		tooLong,
+		tooLong,
+		tooLong,
+		tooLong,
+		tooLong, // 0_______ : ASCII lead
+		twoConts,
+		twoConts,
+		twoConts,
+		twoConts,                     // 10______ : continuation
+		tooShort|overlong2,           // 1100____
+		tooShort,                     // 1101____
+		tooShort|overlong3|surrogate, // 1110____
+		tooShort|tooLarge|tooLarge1000|overlong4, // 1111____
+	), tableHigh)
+
+	// byte_1_low: indexed by the LOW nibble of the previous byte.
+	tableLow := YMM()
+	VBROADCASTI128(table16("utf8t1l",
+		carry|overlong3|overlong2|overlong4, // ____0000
+		carry|overlong2,                     // ____0001
+		carry, carry,                        // ____001_
+		carry|tooLarge,              // ____0100
+		carry|tooLarge|tooLarge1000, // ____0101
+		carry|tooLarge|tooLarge1000, // ____011_
+		carry|tooLarge|tooLarge1000,
+		carry|tooLarge|tooLarge1000, // ____1___
+		carry|tooLarge|tooLarge1000,
+		carry|tooLarge|tooLarge1000,
+		carry|tooLarge|tooLarge1000,
+		carry|tooLarge|tooLarge1000,
+		carry|tooLarge|tooLarge1000|surrogate, // ____1101
+		carry|tooLarge|tooLarge1000,
+		carry|tooLarge|tooLarge1000,
+	), tableLow)
+
+	// byte_2_high: indexed by the HIGH nibble of the current byte.
+	tableCur := YMM()
+	VBROADCASTI128(table16("utf8t2h",
+		tooShort, tooShort, tooShort, tooShort, tooShort, tooShort, tooShort, tooShort, // 0_______
+		tooLong|overlong2|twoConts|overlong3|tooLarge1000|overlong4, // 1000____
+		tooLong|overlong2|twoConts|overlong3|tooLarge,               // 1001____
+		tooLong|overlong2|twoConts|surrogate|tooLarge,               // 101_____
+		tooLong|overlong2|twoConts|surrogate|tooLarge,
+		tooShort, tooShort, tooShort, tooShort, // 11______
+	), tableCur)
+
+	nibble := YMM()
+	VPBROADCASTB(ConstData("utf8n", U8(0x0f)), nibble)
+	high := YMM()
+	VPBROADCASTB(ConstData("utf8h", U8(0x80)), high)
+	// 0xe0-0x80 and 0xf0-0x80: a saturating subtract leaves the high bit set exactly where a 3rd (resp. 4th) byte of a
+	// sequence is required.
+	third := YMM()
+	VPBROADCASTB(ConstData("utf8c3", U8(0xe0-0x80)), third)
+	fourth := YMM()
+	VPBROADCASTB(ConstData("utf8c4", U8(0xf0-0x80)), fourth)
+
+	// prev holds the previous block; it starts as zeros, which is the correct "nothing precedes the input" state
+	// (NUL is ASCII, so it imposes no continuation).
+	prev := YMM()
+	VPXOR(prev, prev, prev)
+	errAcc := YMM()
+	VPXOR(errAcc, errAcc, errAcc)
+
+	i := GP64()
+	XORQ(i, i)
+
+	Label("utf8loop")
+	input := YMM()
+	VMOVDQU(Mem{Base: ptr, Index: i, Scale: 1}, input)
+
+	// The three "previous byte" views. All three shift the same concatenation of the previous block's high lane with
+	// this block's low lane, so the permute is computed once.
+	perm := YMM()
+	VPERM2I128(Imm(0x21), input, prev, perm)
+	prev1, prev2, prev3 := YMM(), YMM(), YMM()
+	VPALIGNR(Imm(15), perm, input, prev1)
+	VPALIGNR(Imm(14), perm, input, prev2)
+	VPALIGNR(Imm(13), perm, input, prev3)
+
+	// check_special_cases: AND of the three lookups leaves a bit set only where every view agrees the pair is illegal.
+	idx := YMM()
+	VPSRLW(Imm(4), prev1, idx)
+	VPAND(nibble, idx, idx)
+	b1h := YMM()
+	VPSHUFB(idx, tableHigh, b1h)
+
+	VPAND(nibble, prev1, idx)
+	b1l := YMM()
+	VPSHUFB(idx, tableLow, b1l)
+
+	VPSRLW(Imm(4), input, idx)
+	VPAND(nibble, idx, idx)
+	b2h := YMM()
+	VPSHUFB(idx, tableCur, b2h)
+
+	sc := YMM()
+	VPAND(b1h, b1l, sc)
+	VPAND(b2h, sc, sc)
+
+	// check_multibyte_lengths: a position two bytes after a 3-byte lead, or three after a 4-byte lead, MUST be a
+	// continuation. XOR-ing that requirement against the special-case bits leaves a set bit exactly where the two
+	// disagree — i.e. a missing or unexpected continuation.
+	must := YMM()
+	VPSUBUSB(third, prev2, must)
+	tmp := YMM()
+	VPSUBUSB(fourth, prev3, tmp)
+	VPOR(tmp, must, must)
+	VPAND(high, must, must)
+	VPXOR(sc, must, must)
+	VPOR(must, errAcc, errAcc)
+
+	VMOVDQA(input, prev)
+	ADDQ(Imm(32), i)
+	CMPQ(i, n)
+	JB(LabelRef("utf8loop"))
+
+	ok := GP8()
+	VPTEST(errAcc, errAcc)
+	SETEQ(ok) // ZF is set when the accumulator is all zero: no error was ever flagged
+	Store(ok, ReturnIndex(0))
+	VZEROUPPER()
+	RET()
+}

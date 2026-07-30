@@ -1,12 +1,20 @@
 # UTF-8 validation
 
+Working with the prototype to introduce UTF-8 validation in the lexer.
+
 1. We need the JSON lexer to be able to valide UTF-8 sequences:
-   invalid UTF-8 should not leak in output strings
+   invalid UTF-8 should not leak in output strings. This should be true for L as well as for VL.
+
 2. The default behavior of L and VL is to error on such invalid input
+
 3. As an option (to both lexers), the error can be swallowed and the invalid UTF-8 sequence
    be in this case mangled as U+FFFD (error rune)
+
 4. For VL, we pledge _verbatim_. This is important to maintain original offset/positioning.
-   But this pledge is broken when mangling an invalid sequence. TO BE DECIDED.
+   But this pledge is broken when mangling an invalid sequence. REMAINS TO BE DECIDED.
+
+5. Prototype introduces options that look a bit complicated to me (fused, ...): either we want error or we mute error.
+   When the error is muted, invalid utf8 sequences are mangled.
 
 Classic algorithm for invalid sequence detection: https://nemanjatrifunovic.substack.com/p/decoding-utf-8-part-vii-validation.
 

@@ -42,4 +42,22 @@
 //		lexer.WithMaxContainerStack(512), // nesting depth ceiling
 //		lexer.WithMaxValueBytes(1<<20),   // per-value / whitespace ceiling
 //	)
+//
+// # UTF-8
+//
+// RFC 8259 §8.1 requires JSON text to be UTF-8, and both lexers enforce it on string values: an ill-formed byte
+// sequence, or a \u escape that does not denote a Unicode scalar value (an unpaired or inverted surrogate), is
+// rejected by default with [codes.ErrInvalidUTF8] / [codes.ErrSurrogateEscape].
+//
+// Callers who would rather sanitize than fail can select [UTF8Replace], which substitutes U+FFFD (one per invalid
+// byte, one per broken escape); [UTF8Passthrough] restores the unvalidated behavior for input already known to be
+// well-formed. See [WithUTF8Policy].
+//
+// Validation is not a second pass over the value: detection of non-ASCII bytes is fused into the string scan the
+// lexer already performs, so a pure-ASCII value — the overwhelmingly common case — is proven valid with no extra read
+// and no call, and only values that actually carry a byte >= 0x80 reach the validator. Measured on the reference
+// corpus, enabling it is free on ASCII-dominated documents and costs ~10% on heavily non-ASCII ones (twitter_status).
+//
+// The input must be UTF-8: a UTF-16 document is rejected with [codes.ErrNotUTF8]. A leading UTF-8 BOM is currently
+// rejected as an invalid token rather than skipped.
 package lexer

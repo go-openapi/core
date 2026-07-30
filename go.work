@@ -4,6 +4,7 @@ use (
 	.
 	./json
 	./json/benchmarks
+	./json/internal/utf8x/_asm
 	./json/lexers/default-lexer/internal/strscan/_asm
 	./json/lexers/yaml-lexer
 )

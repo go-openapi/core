@@ -121,9 +121,65 @@ Streaming mode degrades speed by 15-20%.
 
 Pull iterator (`NextToken`) mode degrades speed by 10-15%.
   
+## UTF-8
+
+RFC 8259 §8.1 requires JSON text to be UTF-8, and both lexers enforce that on string values. This covers both ways a
+value can end up holding a non-character:
+
+* an ill-formed UTF-8 byte sequence in the source (truncated, overlong, an encoded surrogate, beyond U+10FFFF);
+* a `\uXXXX` escape that does not denote a Unicode scalar value — an unpaired, lone or inverted surrogate.
+
+`WithUTF8Policy` picks what happens:
+
+| policy | ill-formed bytes | broken `\u` escape |
+|---|---|---|
+| `UTF8Strict` (default) | `ErrInvalidUTF8` | `ErrSurrogateEscape` |
+| `UTF8Replace` | U+FFFD per invalid byte | U+FFFD per broken escape |
+| `UTF8Passthrough` | passed through untouched | U+FFFD per broken escape |
+
+An escape always produces *some* rune — the escape text is not the value — which is why `UTF8Passthrough` still
+substitutes there.
+
+`VL` keeps escapes as source text, so under `UTF8Replace` it rewrites ill-formed *bytes* but never rewrites escape
+text; the substitution for a broken escape appears when the value is decoded with `token.Unescape`.
+
+### What mangling costs `VL`
+
+U+FFFD encodes as **three** bytes and replaces **one**, so a mangled value is 2 bytes longer per ill-formed byte than
+the text it came from — and a multi-byte fault is several ill-formed bytes, not one (a truncated 3-byte sequence
+becomes three replacements: 9 bytes where the source had 3). For such a value:
+
+* `len(token.Value())` is **not** the width of its source span;
+* an index into the value **cannot** be added to the token's start to get a source offset;
+* the original bytes are **not** recoverable from the token.
+
+Token *positions* are unaffected: `Line()`, `Column()`, `Offset()` and `LeadingSpace()` derive from the scan cursor
+walking the source, never from the value, so they stay exact under every policy. A formatter or linter can still point
+at the right place — it just cannot assume the value it holds is the text that was there. Callers who need the source
+bytes should use `UTF8Strict` (and handle the error) or `UTF8Passthrough` (and validate downstream themselves).
+
+A leading UTF-8 BOM is consumed before any token exists, so it is not re-emitted either — the other documented
+exception to byte-exact round-tripping (RFC 8259 §8.1 asks implementations not to emit one).
+
+**Cost.** Detection is fused into the string scan already being performed — every SWAR word and every AVX2 block is
+OR-accumulated, so "did this value contain a byte >= 0x80" is answered for free — and only values that actually carry
+one reach the validator. On the reference corpus, `UTF8Strict` versus no validation is statistically indistinguishable
+on the four ASCII-dominated workloads and costs ~10% on `twitter_status`, which is 30% non-ASCII by string bytes.
+
+The input must be UTF-8: a UTF-16 document is rejected with `ErrNotUTF8`. A leading UTF-8 BOM is currently rejected as
+an invalid token rather than skipped.
+
 ## Conformance tests
 
 Our implementation of the JSON lexers pass the full JSON conformance suite. No compromise on strictness.
+
+Beyond the suite's `y_`/`n_` contract, the implementation-defined (`i_`) cases are snapshotted in
+`testdata/conformance_i_behavior.golden`, so a change in *implementation-defined* behavior shows up as a reviewable
+diff instead of silence. Regenerate it with:
+
+```
+go test ./lexers/default-lexer -run TestConformanceParsing -update-golden
+```
 
 ## Benchmarks
 

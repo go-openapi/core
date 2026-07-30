@@ -23,7 +23,9 @@ package lexer
 //      the same grammar; only their token *shape* differs).
 //   5. Verbatim round-trip: for any ACCEPTED input, reassembling the raw VL token
 //      stream (leading blanks + verbatim token text) reproduces the input byte for
-//      byte — the defining property of the verbatim lexer.
+//      byte — the defining property of the verbatim lexer. The single exception is a
+//      leading UTF-8 BOM, consumed before any token exists and therefore not
+//      re-emitted (input.CheckBOM; RFC 8259 §8.1 asks implementations not to emit one).
 //   6. Well-formed on accept: an ACCEPTED token stream obeys the JSON grammar
 //      (balanced and correctly typed containers, keys only in object key slots,
 //      key/value alternation, exactly one root value). The lexers are "almost a
@@ -41,6 +43,7 @@ import (
 	"iter"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/go-openapi/core/json/lexers/token"
 )
@@ -403,6 +406,17 @@ func FuzzLexer(f *testing.F) {
 		`123456789012345678901234567890`,
 		`1e999999`,
 		`-`,
+		// ill-formed UTF-8 in string bodies (rejected by the default policy; see utf8_test.go)
+		"[\"\xff\"]",
+		"[\"\xc0\xaf\"]",
+		"[\"\xed\xa0\x80\"]",
+		"[\"\xe0\xff\"]",
+		"[\"ok\xe2\x82\"]",
+		"{\"k\xff\":1}",
+		"[\"caf\xc3\xa9\"]",
+		"[\"\xe6\x97\xa5\xe6\x9c\xac\"]",
+		`["\uD800\uD800"]`,
+		`["𝄞"]`,
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -453,10 +467,16 @@ func FuzzLexer(f *testing.F) {
 		}
 
 		// --- verbatim round-trip on accepted input ---
+		//
+		// A leading UTF-8 BOM is the ONE documented exception: it is consumed before any token exists (see
+		// input.CheckBOM), so it belongs to no token's leading space and is not re-emitted. RFC 8259 §8.1 asks
+		// implementations not to emit a BOM, so dropping it is the conformant direction — but it does mean the
+		// round-trip is byte-exact only for the document body.
 		if vPullErr == nil {
+			want := bytes.TrimPrefix(data, []byte("\uFEFF"))
 			rt := fzVerbatimRoundtrip(data, n)
-			if !bytes.Equal(rt, data) {
-				t.Fatalf("VL round-trip mismatch:\n in =%q\n out=%q", data, rt)
+			if !bytes.Equal(rt, want) {
+				t.Fatalf("VL round-trip mismatch:\n in =%q\n out=%q\n want=%q", data, rt, want)
 			}
 		}
 
@@ -470,5 +490,112 @@ func FuzzLexer(f *testing.F) {
 				)
 			}
 		}
+
+		// --- UTF-8: no ill-formed sequence may reach the caller ---
+		fzUTF8Invariants(t, data, n)
 	})
+}
+
+// fzUTF8Invariants pins the promise the UTF-8 work exists to make: under the default policy an accepted document
+// yields only well-formed values, and under UTF8Replace EVERY document that is otherwise grammatical is accepted and
+// still yields only well-formed values.
+//
+// It is the broadest guard we have, because it holds for arbitrary bytes rather than for a fixture table: the fused
+// non-ASCII detection is duplicated across eight scanners, and a miss in any one of them shows up here.
+func fzUTF8Invariants(t *testing.T, data []byte, n int) {
+	t.Helper()
+
+	check := func(lane string, policy UTF8Policy, values [][]byte, err error) {
+		if err != nil {
+			return
+		}
+		for _, v := range values {
+			if !utf8.Valid(v) {
+				t.Fatalf(
+					"%s emitted an ill-formed value under policy %d: %q\ninput=%q",
+					lane,
+					policy,
+					v,
+					data,
+				)
+			}
+		}
+	}
+
+	for _, policy := range []UTF8Policy{UTF8Strict, UTF8Replace} {
+		lVals, lErr := fzStringValues(
+			NewWithBytes(append([]byte(nil), data...), WithUTF8Policy(policy)),
+			n,
+		)
+		check("L/bytes", policy, lVals, lErr)
+
+		sVals, sErr := fzStringValues(
+			New(bytes.NewReader(data), WithBufferSize(32), WithUTF8Policy(policy)), n)
+		check("L/reader", policy, sVals, sErr)
+
+		// VL keeps escapes as source text, so its values are checked through the decoder — the form a caller
+		// actually consumes.
+		vVals, vErr := fzVerbatimDecodedValues(
+			NewVerbatimWithBytes(append([]byte(nil), data...), WithUTF8Policy(policy)), n)
+		check("VL/bytes", policy, vVals, vErr)
+
+		vsVals, vsErr := fzVerbatimDecodedValues(
+			NewVerbatim(bytes.NewReader(data), WithBufferSize(32), WithUTF8Policy(policy)), n)
+		check("VL/reader", policy, vsVals, vsErr)
+
+		// Replacement must never be the reason a document is rejected: it only ever turns a UTF-8 error into a
+		// substitution, so anything the default policy accepts it must accept too.
+		if policy == UTF8Replace && lErr != nil {
+			if _, strictErr := fzStringValues(
+				NewWithBytes(append([]byte(nil), data...)), n); strictErr == nil {
+				t.Fatalf(
+					"UTF8Replace rejected a document the default policy accepts: %v\ninput=%q",
+					lErr,
+					data,
+				)
+			}
+		}
+	}
+}
+
+// fzStringValues drains a semantic lexer and returns the value of every String/Key token.
+func fzStringValues(lex *L, n int) ([][]byte, error) {
+	var out [][]byte
+	limit := fzCap(n)
+	for i := 0; ; i++ {
+		if i > limit {
+			panic("lexer did not terminate (utf8 invariants)")
+		}
+		tok := lex.NextToken()
+		if !lex.Ok() {
+			return out, lex.Err()
+		}
+		if k := tok.Kind(); k == token.String || k == token.Key {
+			out = append(out, bytes.Clone(tok.Value()))
+		}
+		if tok.IsEOF() {
+			return out, nil
+		}
+	}
+}
+
+// fzVerbatimDecodedValues drains a verbatim lexer and returns every String/Key value in DECODED form.
+func fzVerbatimDecodedValues(lex *VL, n int) ([][]byte, error) {
+	var out [][]byte
+	limit := fzCap(n)
+	for i := 0; ; i++ {
+		if i > limit {
+			panic("lexer did not terminate (utf8 invariants, verbatim)")
+		}
+		tok := lex.NextToken()
+		if !lex.Ok() {
+			return out, lex.Err()
+		}
+		if k := tok.Kind(); k == token.String || k == token.Key {
+			out = append(out, token.Unescape(bytes.Clone(tok.Value())))
+		}
+		if tok.IsEOF() {
+			return out, nil
+		}
+	}
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/go-openapi/core/json/lexers/default-lexer/internal/strscan"
 	"github.com/go-openapi/core/json/lexers/default-lexer/internal/swar"
 	codes "github.com/go-openapi/core/json/lexers/error-codes"
-	scan "github.com/go-openapi/core/json/lexers/internal/scan"
 	"github.com/go-openapi/core/json/lexers/token"
 )
 
@@ -29,22 +28,26 @@ import (
 //
 //nolint:dupl // the structure is the same but differs subtly and its critical that the inside remains inlined.
 func (in *Input) consumeStringRawWhole() token.T {
-	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 	start := in.Consumed
 
 	i := start
+	var hi uint64 // fused non-ASCII accumulator, see consumeStringWhole
 	guard := start + guessLong
 	if in.NoAVX2 {
 		guard = n + 1 // WithoutAVX2: never delegate, pure inline SWAR (see consumeStringWhole)
 	}
 	for i+8 <= n {
-		if m := swar.StringStopMask(binary.LittleEndian.Uint64(data[i:])); m != 0 {
-			i += swar.FirstByte(m)
+		w := binary.LittleEndian.Uint64(data[i:])
+		if m := swar.StringStopMask(w); m != 0 {
+			k := swar.FirstByte(m)
+			hi |= swar.LanesBelow(w, k)
+			i += k
 
 			break
 		}
+		hi |= w
 		i += 8
 		if i >= guard {
 			break // guessLong clean bytes in — delegate below (call kept out of the loop)
@@ -54,77 +57,11 @@ func (in *Input) consumeStringRawWhole() token.T {
 	// consumeStringWhole).
 	if i >= guard && i+8 <= n {
 		if c := data[i]; c != doubleQuote && c != escape && c >= controlCharsUpperBound {
-			i += strscan.ScanStop(data[i:n])
-		}
-	}
-	for ; i < n; i++ {
-		if c := data[i]; c == doubleQuote || c == escape || c < controlCharsUpperBound {
-			break
-		}
-	}
-	if i >= n {
-		in.Consumed, in.Offset = i, uint64(i)
-		in.Err = codes.ErrUnterminatedString
-
-		return token.None
-	}
-
-	switch c := data[i]; {
-	case c == doubleQuote:
-		// no escapes: raw == decoded, same aliasing exit as consumeStringWhole
-		if in.MaxValueBytes > 0 && i-start > in.MaxValueBytes {
-			in.Consumed, in.Offset = i, uint64(i)
-			in.Err = codes.ErrMaxValueBytes
-
-			return token.None
-		}
-		value := data[start:i:i]
-		i++
-		in.Consumed, in.Offset = i, uint64(i)
-
-		return in.finishStringValue(value)
-
-	case c < controlCharsUpperBound:
-		in.Consumed, in.Offset = i, uint64(i)
-		in.Err = codes.ErrControlChar
-
-		return token.None
-	}
-
-	// an escape was found at i: validate the rest but keep the raw bytes.
-	return in.consumeStringRawEscaped(start, i)
-}
-
-func (in *Input) consumeStringRawWholeV() token.T {
-	data := in.Buffer
-	n := in.Bufferized
-	start := in.Consumed
-
-	i := start
-	var hi uint64
-	guard := start + guessLong
-	if in.NoAVX2 {
-		guard = n + 1 // WithoutAVX2: never delegate, pure inline SWAR (see consumeStringWhole)
-	}
-	for i+8 <= n {
-		w := binary.LittleEndian.Uint64(data[i:])
-		hi |= w
-		if m := swar.StringStopMask(w); m != 0 {
-			i += swar.FirstByte(m)
-
-			break
-		}
-		i += 8
-		if i >= guard {
-			break
-		}
-	}
-	// clean past guessLong → guess long, AVX2 scan of the rest (same heuristic and out-of-loop placement as
-	// consumeStringWhole).
-	if i >= guard && i+8 <= n {
-		if c := data[i]; c != doubleQuote && c != escape && c >= controlCharsUpperBound {
-			i += strscan.ScanStop(data[i:n])
-			hi = ^uint64(0) // AVX2 region unaccumulated: force the check
+			delta, nonASCII := strscan.ScanStop(data[i:n])
+			i += delta
+			if nonASCII {
+				hi |= swar.HighBits
+			}
 		}
 	}
 	for ; i < n; i++ {
@@ -153,9 +90,8 @@ func (in *Input) consumeStringRawWholeV() token.T {
 		value := data[start:i:i]
 		i++
 		in.Consumed, in.Offset = i, uint64(i)
-		in.SawNonASCII = hi&swar.HighBits != 0
 
-		return in.finishStringValue(value)
+		return in.finishStringValue(value, hi&swar.HighBits != 0)
 
 	case c < controlCharsUpperBound:
 		in.Consumed, in.Offset = i, uint64(i)
@@ -165,9 +101,7 @@ func (in *Input) consumeStringRawWholeV() token.T {
 	}
 
 	// an escape was found at i: validate the rest but keep the raw bytes.
-	in.SawNonASCII = true
-
-	return in.consumeStringRawEscaped(start, i)
+	return in.consumeStringRawEscaped(start, i, hi&swar.HighBits != 0)
 }
 
 // consumeStringRawEscaped validates a string that contains at least one escape (data[i] == escape) without decoding it,
@@ -175,8 +109,10 @@ func (in *Input) consumeStringRawWholeV() token.T {
 //
 // Clean runs between escapes are skipped with the same adaptive scalar-probe-then-SWAR scan the decoder uses
 // (consumeStringEscaped), but with no copying — so a sparse-escape string with a long clean tail stays fast.
-func (in *Input) consumeStringRawEscaped(start, i int) token.T {
-	in.SawNonASCII = true
+// nonASCII carries the verdict for the clean prefix already scanned and is extended over every further raw run; see
+// consumeStringEscaped. Unlike the decoding path, the value here keeps its escapes as source text, so a \u escape
+// contributes only its (ASCII) escape bytes.
+func (in *Input) consumeStringRawEscaped(start, i int, nonASCII bool) token.T {
 	data := in.Buffer
 	n := in.Bufferized
 
@@ -193,7 +129,7 @@ func (in *Input) consumeStringRawEscaped(start, i int) token.T {
 			i++
 			in.Consumed, in.Offset = i, uint64(i)
 
-			return in.finishStringValue(value)
+			return in.finishStringValue(value, nonASCII)
 
 		case c == escape:
 			i++
@@ -207,7 +143,7 @@ func (in *Input) consumeStringRawEscaped(start, i int) token.T {
 			case doubleQuote, escape, slash, 'b', 'f', 'n', 'r', 't':
 				i++
 			case 'u':
-				next, err := validateUnicodeWhole(data, i+1, n)
+				next, err := validateUnicodeWhole(data, i+1, n, in.UTF8Policy)
 				if err != nil {
 					in.Consumed, in.Offset = i, uint64(i)
 					in.Err = err
@@ -233,34 +169,48 @@ func (in *Input) consumeStringRawEscaped(start, i int) token.T {
 			// (see consumeStringEscaped).
 			run := i
 			stop := i + 1
+			hi := uint64(c) // data[i], the byte that entered this run
 			probe := min(stop+swarProbe, n)
 			for ; stop < probe; stop++ {
-				if b := data[stop]; b == doubleQuote || b == escape || b < controlCharsUpperBound {
+				b := data[stop]
+				if b == doubleQuote || b == escape || b < controlCharsUpperBound {
 					break
 				}
+				hi |= uint64(b)
 			}
 			if stop == probe &&
 				stop < n { // outran the scalar probe → SWAR, guess long past guessLong
 				for stop+8 <= n {
-					if m := swar.StringStopMask(binary.LittleEndian.Uint64(data[stop:])); m != 0 {
-						stop += swar.FirstByte(m)
+					w := binary.LittleEndian.Uint64(data[stop:])
+					if m := swar.StringStopMask(w); m != 0 {
+						k := swar.FirstByte(m)
+						hi |= swar.LanesBelow(w, k)
+						stop += k
 
 						break
 					}
+					hi |= w
 					stop += 8
 					if stop-run >= guessLong && !in.NoAVX2 {
-						stop += strscan.ScanStop(data[stop:n])
+						delta, runNonASCII := strscan.ScanStop(data[stop:n])
+						stop += delta
+						if runNonASCII {
+							hi |= swar.HighBits
+						}
 
 						break
 					}
 				}
 				for ; stop < n; stop++ {
-					if b := data[stop]; b == doubleQuote || b == escape ||
+					b := data[stop]
+					if b == doubleQuote || b == escape ||
 						b < controlCharsUpperBound {
 						break
 					}
+					hi |= uint64(b)
 				}
 			}
+			nonASCII = nonASCII || hi&swar.HighBits != 0
 			i = stop
 		}
 	}
@@ -287,22 +237,26 @@ func (in *Input) consumeStringRawEscaped(start, i int) token.T {
 //
 //nolint:dupl // the structure is the same but differs subtly and its critical that the inside remains inlined.
 func (in *Input) consumeStringRawStreamFast() token.T {
-	in.SawNonASCII = true
 	data := in.Buffer
 	n := in.Bufferized
 	start := in.Consumed // first content byte (opening quote already consumed)
 
 	i := start
+	var hi uint64 // fused non-ASCII accumulator, see consumeStringWhole
 	guard := start + guessLong
 	if in.NoAVX2 {
 		guard = n + 1
 	}
 	for i+8 <= n {
-		if m := swar.StringStopMask(binary.LittleEndian.Uint64(data[i:])); m != 0 {
-			i += swar.FirstByte(m)
+		w := binary.LittleEndian.Uint64(data[i:])
+		if m := swar.StringStopMask(w); m != 0 {
+			k := swar.FirstByte(m)
+			hi |= swar.LanesBelow(w, k)
+			i += k
 
 			break
 		}
+		hi |= w
 		i += 8
 		if i >= guard {
 			break
@@ -310,13 +264,19 @@ func (in *Input) consumeStringRawStreamFast() token.T {
 	}
 	if i >= guard && i+8 <= n {
 		if c := data[i]; c != doubleQuote && c != escape && c >= controlCharsUpperBound {
-			i += strscan.ScanStop(data[i:n])
+			delta, nonASCII := strscan.ScanStop(data[i:n])
+			i += delta
+			if nonASCII {
+				hi |= swar.HighBits
+			}
 		}
 	}
 	for ; i < n; i++ {
-		if c := data[i]; c == doubleQuote || c == escape || c < controlCharsUpperBound {
+		c := data[i]
+		if c == doubleQuote || c == escape || c < controlCharsUpperBound {
 			break
 		}
+		hi |= uint64(c)
 	}
 
 	if i >= n {
@@ -339,7 +299,7 @@ func (in *Input) consumeStringRawStreamFast() token.T {
 		in.Offset += uint64(end - start)
 		in.Consumed = end
 
-		return in.finishStringValue(value)
+		return in.finishStringValue(value, hi&swar.HighBits != 0)
 
 	case c < controlCharsUpperBound:
 		in.Offset += uint64(i - start)
@@ -357,7 +317,7 @@ func (in *Input) consumeStringRawStreamFast() token.T {
 // consumeStringRawStreaming is the raw scan over a refilling buffer: it copies the source bytes verbatim (escapes
 // intact) into l.in.CurrentValue while validating them, so the value survives buffer turnover.
 func (in *Input) consumeStringRawStreaming() token.T {
-	in.SawNonASCII = true
+	var nonASCII bool // did any raw source byte carry the high bit (see consumeStringEscaped)
 	in.CurrentValue = in.CurrentValue[:0]
 
 	for {
@@ -384,7 +344,7 @@ func (in *Input) consumeStringRawStreaming() token.T {
 
 			switch {
 			case b == doubleQuote:
-				return in.finishStringValue(in.CurrentValue)
+				return in.finishStringValue(in.CurrentValue, nonASCII)
 
 			case b == escape:
 				in.CurrentValue = append(in.CurrentValue, escape)
@@ -400,6 +360,7 @@ func (in *Input) consumeStringRawStreaming() token.T {
 				return token.None
 
 			default:
+				nonASCII = nonASCII || b >= utf8.RuneSelf
 				in.CurrentValue = append(in.CurrentValue, b)
 
 				// bulk-scan the rest of this clean run within the current window (§10.5c, the raw analogue of
@@ -414,36 +375,48 @@ func (in *Input) consumeStringRawStreaming() token.T {
 				n := in.Bufferized
 				runStart := in.Consumed
 				stop := runStart
+				var hi uint64
 				probe := min(stop+swarProbe, n)
 				for ; stop < probe; stop++ {
-					if c := data[stop]; c == doubleQuote || c == escape ||
+					c := data[stop]
+					if c == doubleQuote || c == escape ||
 						c < controlCharsUpperBound {
 						break
 					}
+					hi |= uint64(c)
 				}
 				if stop == probe && stop < n { // run outran the scalar probe → SWAR/AVX2
 					for stop+8 <= n {
-						if m := swar.StringStopMask(
-							binary.LittleEndian.Uint64(data[stop:]),
-						); m != 0 {
-							stop += swar.FirstByte(m)
+						w := binary.LittleEndian.Uint64(data[stop:])
+						if m := swar.StringStopMask(w); m != 0 {
+							k := swar.FirstByte(m)
+							hi |= swar.LanesBelow(w, k)
+							stop += k
 
 							break
 						}
+						hi |= w
 						stop += 8
 						if stop-runStart >= guessLong && !in.NoAVX2 {
-							stop += strscan.ScanStop(data[stop:n])
+							delta, runNonASCII := strscan.ScanStop(data[stop:n])
+							stop += delta
+							if runNonASCII {
+								hi |= swar.HighBits
+							}
 
 							break
 						}
 					}
 					for ; stop < n; stop++ {
-						if c := data[stop]; c == doubleQuote || c == escape ||
+						c := data[stop]
+						if c == doubleQuote || c == escape ||
 							c < controlCharsUpperBound {
 							break
 						}
+						hi |= uint64(c)
 					}
 				}
+				nonASCII = nonASCII || hi&swar.HighBits != 0
 				if stop > runStart {
 					if in.MaxValueBytes > 0 &&
 						len(in.CurrentValue)+(stop-runStart) > in.MaxValueBytes {
@@ -485,70 +458,37 @@ func (in *Input) rawEscapeStreaming() error {
 //
 // The leading "\u" has already been appended.
 func (in *Input) rawUnicodeStreaming() error {
-	var buf [4]byte
-	if err := in.consumeN(buf[:]); err != nil {
-		return codes.ErrUnicodeEscape
+	start := len(in.CurrentValue)
+	digits, r, err := in.readHex4()
+	if err != nil {
+		return err
 	}
-	code, ok := scan.Hex4(buf[0], buf[1], buf[2], buf[3])
-	if !ok {
-		return codes.ErrUnicodeEscape
-	}
-	in.CurrentValue = append(in.CurrentValue, buf[:]...)
+	in.CurrentValue = append(in.CurrentValue, digits[:]...)
 
-	r := rune(code)
-	if utf16.IsSurrogate(r) {
-		var nb [6]byte // "\uYYYY"
-		if err := in.consumeN(nb[:]); err != nil {
-			return codes.ErrSurrogateEscape
-		}
-		if nb[0] != escape || nb[1] != 'u' {
-			return codes.ErrSurrogateEscape
-		}
-		code2, ok2 := scan.Hex4(nb[2], nb[3], nb[4], nb[5])
-		if !ok2 {
-			return codes.ErrUnicodeEscape
-		}
-		if utf16.DecodeRune(r, rune(code2)) == utf8.RuneError {
-			return codes.ErrSurrogateEscape
-		}
-		in.CurrentValue = append(in.CurrentValue, nb[:]...)
-	} else if !utf8.ValidRune(r) {
-		return codes.ErrInvalidRune
+	if !utf16.IsSurrogate(r) {
+		return nil
 	}
 
+	// a high surrogate must be completed by \uXXXX; peek so an escape that does not complete it is left to be
+	// validated on its own (see [Input.peekLowSurrogate]).
+	if low, ok := in.peekLowSurrogate(); ok {
+		if utf16.DecodeRune(r, low) != utf8.RuneError {
+			in.CurrentValue = append(
+				in.CurrentValue,
+				in.Buffer[in.Consumed:in.Consumed+surrogateEscapeLen]...)
+			in.takePeeked(surrogateEscapeLen)
+
+			return nil
+		}
+	}
+
+	if berr := in.brokenSurrogate(); berr != nil {
+		in.CurrentValue = in.CurrentValue[:start] // the value is discarded with the error; keep it consistent anyway
+
+		return berr
+	}
+
+	// UTF8Replace / UTF8Passthrough: VL keeps the escape as SOURCE TEXT, so nothing is rewritten here. The U+FFFD
+	// substitution happens on decode, in token.Unescape, which already yields it for a broken pair (plan §2.5).
 	return nil
-}
-
-// validateUnicodeWhole validates a \uXXXX sequence at pos (first hex digit, past the 'u') in a whole buffer, following
-// one surrogate pair when present.
-//
-// It returns the index just past the validated sequence, or an error.
-func validateUnicodeWhole(data []byte, pos, n int) (int, error) {
-	if pos+4 > n {
-		return pos, codes.ErrUnicodeEscape
-	}
-	code, ok := scan.Hex4(data[pos], data[pos+1], data[pos+2], data[pos+3])
-	if !ok {
-		return pos, codes.ErrUnicodeEscape
-	}
-	pos += 4
-
-	r := rune(code)
-	if utf16.IsSurrogate(r) {
-		if pos+6 > n || data[pos] != escape || data[pos+1] != 'u' {
-			return pos, codes.ErrSurrogateEscape
-		}
-		code2, ok2 := scan.Hex4(data[pos+2], data[pos+3], data[pos+4], data[pos+5])
-		if !ok2 {
-			return pos, codes.ErrUnicodeEscape
-		}
-		if utf16.DecodeRune(r, rune(code2)) == utf8.RuneError {
-			return pos, codes.ErrSurrogateEscape
-		}
-		pos += 6
-	} else if !utf8.ValidRune(r) {
-		return pos, codes.ErrInvalidRune
-	}
-
-	return pos, nil
 }

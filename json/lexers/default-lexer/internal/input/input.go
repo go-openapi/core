@@ -42,16 +42,39 @@ type Input struct {
 	MaxValueBytes      int
 	KeepPreviousBuffer int
 
-	// ValidateMode (PROTOTYPE) selects the UTF-8 validation strategy.
-	ValidateMode int
+	// UTF8Policy governs what happens to a string value that is not valid UTF-8. Mirrored from the like-named option in
+	// L.reset(); the lexer package aliases this type so it is the single definition.
+	UTF8Policy UTF8Policy
 
-	// SawNonASCII (PROTOTYPE) reports whether the scan observed a byte >= 0x80 in the value just produced.
-	SawNonASCII bool
+	// sanitized holds the U+FFFD-substituted rewrite of an ill-formed value under UTF8Replace.
+	//
+	// It is a buffer of its own rather than CurrentValue because on the unescaping paths the value to rewrite IS
+	// CurrentValue. It is allocated lazily on the first ill-formed value, so a well-formed document never pays for it.
+	sanitized []byte
 }
 
-// UTF-8 validation strategies (PROTOTYPE).
+// UTF8Policy selects what a lexer does with input that cannot be represented as a Unicode scalar value: an ill-formed
+// UTF-8 byte sequence in a string body, or a \u escape that does not form one.
+//
+// The zero value is [UTF8Strict], so validation is on unless a caller opts out.
+type UTF8Policy uint8
+
 const (
-	ValidateOff   = 0 // current behavior: no validation
-	ValidateNaive = 1 // utf8.Valid over every string value at the funnel
-	ValidateFused = 2 // non-ASCII accumulated during the existing scan; utf8.Valid only when a high bit was seen
+	// UTF8Strict rejects the document: the lexer errors with codes.ErrInvalidUTF8 (ill-formed bytes) or
+	// codes.ErrSurrogateEscape (a broken \u surrogate pair). This is the default.
+	UTF8Strict UTF8Policy = iota
+
+	// UTF8Replace accepts the document and substitutes U+FFFD — one per invalid byte, one per broken escape — so an
+	// emitted value is always valid UTF-8. Only an offending value is rewritten (and therefore copied); a valid value is
+	// still aliased zero-copy.
+	UTF8Replace
+
+	// UTF8Passthrough skips raw-byte validation entirely: ill-formed bytes reach the caller untouched. A \u escape still
+	// decodes to U+FFFD when broken, because an escape must always produce some rune.
+	//
+	// UNSAFE: only for input already known to be valid UTF-8.
+	UTF8Passthrough
 )
+
+// Validates reports whether the policy inspects raw string bytes at all.
+func (p UTF8Policy) Validates() bool { return p != UTF8Passthrough }
