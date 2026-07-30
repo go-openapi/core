@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/go-openapi/core/json/internal/utf8x"
 	"github.com/go-openapi/core/json/lexers/token"
 	"github.com/go-openapi/core/json/stores/values"
 	"github.com/go-openapi/core/json/types"
@@ -20,6 +21,11 @@ type wrt interface {
 	writeSingleByte(byte)
 	writeBinary([]byte)
 	writeEscaped([]byte) []byte
+	// escapePolicy reports how ill-formed UTF-8 in caller-supplied data must be handled.
+	//
+	// Named for its role rather than after the option: `buffered` embeds both baseWriter and bufferedOptions, so a
+	// method here called utf8Policy would collide with the promoted option field of that name.
+	escapePolicy() UTF8Policy
 	// Ok is the cheap, inlinable hot-path status check (w.err == nil), used for the
 	// per-operation guards instead of the value-receiver Err which copies and wraps.
 	Ok() bool
@@ -30,6 +36,7 @@ type baseWriter struct {
 	w       io.Writer
 	written int64
 	err     error
+	utf8    UTF8Policy
 }
 
 // Ok tells the status of the writer.
@@ -63,6 +70,9 @@ func (w *baseWriter) Reset() {
 func (w *baseWriter) Size() int64 {
 	return w.written
 }
+
+// escapePolicy reports how ill-formed UTF-8 in caller-supplied data must be handled. See [WithUTF8Policy].
+func (w *baseWriter) escapePolicy() UTF8Policy { return w.utf8 }
 
 func (w *baseWriter) inc(n int) {
 	w.written += int64(n)
@@ -122,12 +132,25 @@ func (w *commonWriter[T]) Bool(v bool) {
 }
 
 // Raw appends raw bytes to the buffer, without quotes and without escaping.
+//
+// The bytes are caller-supplied, so the UTF-8 policy applies: under [UTF8Strict] ill-formed input is refused. Nothing
+// is escaped or substituted — "raw" means raw — so [UTF8Replace] does not rewrite anything here either; it only
+// declines to complain.
 func (w *commonWriter[T]) Raw(data []byte) {
 	if !w.jw.Ok() || len(data) == 0 {
 		return
 	}
 
-	w.jw.writeBinary(data)
+	holder, redeem := poolOfEscapedBuffers.BorrowWithSizeAndRedeem(0)
+	defer redeem()
+
+	scratch := holder.Slice()
+	out, ok := w.rawUTF8(data, &scratch)
+	if !ok {
+		return
+	}
+
+	w.jw.writeBinary(out)
 }
 
 // String writes a string as a JSON string value enclosed by double quotes, with escaping.
@@ -166,10 +189,18 @@ func (w *commonWriter[T]) StringRunes(data []rune) {
 
 	buf := holder.Slice()
 	for _, r := range data {
+		if !utf8.ValidRune(r) && w.jw.escapePolicy() == UTF8Strict {
+			// utf8.AppendRune would silently turn a surrogate or an out-of-range value into U+FFFD
+			w.jw.SetErr(fmt.Errorf("%w: rune %U is not a Unicode scalar value: %w",
+				ErrInvalidUTF8, r, ErrDefaultWriter))
+
+			return
+		}
 		buf = utf8.AppendRune(buf, r)
 	}
 
-	w.writeText(buf)
+	// the runes were just encoded, so the bytes are well-formed by construction
+	w.writeTextTrusted(buf)
 }
 
 // NumberBytes writes a slice of bytes as a JSON number.
@@ -197,7 +228,14 @@ func (w *commonWriter[T]) RawCopy(r io.Reader) {
 	}
 
 	bufHolder, redeemReadBuffer := poolOfReadBuffers.BorrowWithRedeem()
+	defer redeemReadBuffer()
 	buf := bufHolder.Slice()
+
+	if w.jw.escapePolicy() != UTF8Passthrough {
+		w.rawCopyValidated(r, buf)
+
+		return
+	}
 
 	for {
 		n, err := r.Read(buf)
@@ -218,8 +256,6 @@ func (w *commonWriter[T]) RawCopy(r io.Reader) {
 			break
 		}
 	}
-
-	redeemReadBuffer()
 }
 
 func (w *commonWriter[T]) StringCopy(r io.Reader) {
@@ -245,6 +281,10 @@ func (w *commonWriter[T]) StringCopy(r io.Reader) {
 		}
 
 		if n > 0 {
+			if !w.checkUTF8Chunk(buf[:n]) {
+				return
+			}
+
 			remainder = w.jw.writeEscaped(buf[:n])
 			if !w.jw.Ok() {
 				return
@@ -287,13 +327,11 @@ func (w *commonWriter[T]) StringCopy(r io.Reader) {
 				// Note: this must not clobber the outer loop's n/err, which drive termination.
 				if _, rerr := io.ReadFull(r, single[notWritten:runeSize]); rerr != nil {
 					if errors.Is(rerr, io.EOF) || errors.Is(rerr, io.ErrUnexpectedEOF) {
-						w.jw.SetErr(
-							fmt.Errorf(
-								"unexpected incomplete rune at end of input: %c: %w",
-								remainder,
-								ErrDefaultWriter,
-							),
-						)
+						// the input ended inside the sequence: it is truncated, not merely split
+						if !w.finishRemainder(remainder) {
+							return
+						}
+						w.jw.writeSingleByte(quote)
 
 						return
 					}
@@ -303,19 +341,18 @@ func (w *commonWriter[T]) StringCopy(r io.Reader) {
 					return
 				}
 
+				// the stitched sequence never passed through checkUTF8Chunk (it was assembled here, not read as a
+				// chunk), so it must be checked on its own or a fault spanning the read boundary slips through
+				if !w.checkUTF8(single[:runeSize]) {
+					return
+				}
+
 				remainder = w.jw.writeEscaped(single[:runeSize])
 				if !w.jw.Ok() {
 					return
 				}
-				if len(remainder) > 0 {
-					w.jw.SetErr(
-						fmt.Errorf(
-							"unexpected incomplete rune at end of input: %c: %w",
-							remainder,
-							ErrDefaultWriter,
-						),
-					)
-
+				if len(remainder) > 0 && !w.finishRemainder(remainder) {
+					// a full rune's worth of bytes that still does not complete: truncated
 					return
 				}
 			}
@@ -528,7 +565,8 @@ func (w *commonWriter[T]) Token(tok token.T) {
 			// ignore
 		}
 	case token.String, token.Key:
-		w.writeText(tok.Value())
+		// a token value comes from a lexer, which already validated it: see writeTextTrusted
+		w.writeTextTrusted(tok.Value())
 	case token.Number:
 		w.NumberBytes(tok.Value())
 	case token.Boolean:
@@ -578,6 +616,83 @@ func (w *commonWriter[T]) VerbatimValue(value values.VerbatimValue) {
 	w.Value(value.Value)
 }
 
+// rawCopyValidated is [commonWriter.RawCopy] under [UTF8Strict] and [UTF8Replace]: it streams the reader through
+// while validating it as a single UTF-8 stream rather than as independent chunks.
+//
+// A read boundary may fall inside a multi-byte sequence, which is not an error — the sequence is completed by the
+// next read. So the trailing incomplete bytes of a chunk are HELD BACK rather than written, and re-joined with the
+// bytes that follow; reads land at an offset in buf that leaves room for them, so the join needs no second buffer and
+// no allocation. An incomplete sequence still pending when the reader ends is a genuine truncation.
+//
+// Validating chunk-locally instead would leave a hole exactly here: a lead byte at the end of one chunk followed by a
+// non-continuation at the start of the next would be tolerated by both halves and emitted.
+//
+// On a genuine fault [UTF8Strict] stops with an error and [UTF8Replace] rewrites that chunk with U+FFFD substituted,
+// so "the output is always valid UTF-8" holds for the streaming path exactly as it does for [commonWriter.Raw].
+func (w *commonWriter[T]) rawCopyValidated(r io.Reader, buf []byte) {
+	// maxCarry bytes of headroom at the front of buf hold the incomplete tail of the previous chunk.
+	const maxCarry = utf8.UTFMax - 1
+	if len(buf) <= maxCarry {
+		w.jw.SetErr(fmt.Errorf("read buffer too small for UTF-8 validation: %w", ErrDefaultWriter))
+
+		return
+	}
+
+	strict := w.jw.escapePolicy() == UTF8Strict
+	holder, redeem := poolOfEscapedBuffers.BorrowWithSizeAndRedeem(0)
+	defer redeem()
+	scratch := holder.Slice()
+
+	carry := 0
+	for {
+		n, err := r.Read(buf[maxCarry:])
+		if err != nil && !errors.Is(err, io.EOF) {
+			w.jw.SetErr(err)
+
+			return
+		}
+
+		atEOF := n == 0 || (err != nil && errors.Is(err, io.EOF))
+		chunk := buf[maxCarry-carry : maxCarry+n]
+
+		idx := utf8x.FirstInvalid(chunk)
+		switch {
+		case idx < 0:
+			carry = 0
+		case !utf8.FullRune(chunk[idx:]) && !atEOF:
+			// the chunk ends inside a sequence the next read will complete: hold those bytes back
+			carry = len(chunk) - idx
+			chunk = chunk[:idx]
+		case strict:
+			w.jw.SetErr(fmt.Errorf("%w at byte %d: %w", ErrInvalidUTF8, idx, ErrDefaultWriter))
+
+			return
+		default:
+			// UTF8Replace: rewrite this chunk, held-back bytes included. A sequence truncated by the end of the
+			// input lands here too, and becomes one U+FFFD per byte like any other ill-formed sequence.
+			scratch = utf8x.Sanitize(scratch[:0], chunk)
+			chunk = scratch
+			carry = 0
+		}
+
+		if len(chunk) > 0 {
+			w.jw.writeBinary(chunk)
+			if !w.jw.Ok() {
+				return
+			}
+		}
+
+		if carry > 0 {
+			// move the held-back tail into the headroom, where the next read joins onto it
+			copy(buf[maxCarry-carry:maxCarry], buf[maxCarry+n-carry:maxCarry+n])
+		}
+
+		if atEOF {
+			return
+		}
+	}
+}
+
 // append writes down the result of AppendText.
 //
 // This borrows a temporary buffer to decode the result of AppendText()
@@ -613,18 +728,28 @@ func (w *commonWriter[T]) writeTextString(input string) {
 	w.writeText(b)
 }
 
+// writeText writes CALLER-supplied bytes as a quoted, escaped JSON string, subject to the UTF-8 policy.
+//
+// Values that came from a lexer token go through [commonWriter.writeTextTrusted] instead: the lexers already
+// guarantee valid UTF-8, so re-checking them would be pure overhead on the hot token-copy path.
 func (w *commonWriter[T]) writeText(data []byte) {
+	if !w.checkUTF8(data) {
+		return
+	}
+
+	w.writeTextTrusted(data)
+}
+
+// writeTextTrusted writes bytes that are already known to be valid UTF-8 as a quoted, escaped JSON string.
+//
+// "Trusted" means sourced from a lexer token: [L] and [VL] validate string values as they scan, so the writer does
+// not pay to check them again. That trust is only as good as the lexer's policy — see the package documentation for
+// the loophole this leaves.
+func (w *commonWriter[T]) writeTextTrusted(data []byte) {
 	w.jw.writeSingleByte(quote)
 	remainder := w.jw.writeEscaped(data)
-	if len(remainder) > 0 {
-		w.jw.SetErr(
-			fmt.Errorf(
-				"unexpected incomplete rune (invalid first byte): %c: %w",
-				remainder,
-				ErrDefaultWriter,
-			),
-		)
-
+	if len(remainder) > 0 && !w.finishRemainder(remainder) {
+		// nothing follows this value, so the trailing bytes are a truncated sequence, not a split one
 		return
 	}
 	w.jw.writeSingleByte(quote)

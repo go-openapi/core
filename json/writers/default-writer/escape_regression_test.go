@@ -167,7 +167,7 @@ func TestStringCopyTruncatedRuneErrors(t *testing.T) {
 func expectedJSONString(s string) string {
 	out := make([]byte, 0, len(s)+2)
 	out = append(out, '"')
-	escaped, remainder := escapedBytes([]byte(s), make([]byte, 0, len(s)))
+	escaped, remainder := escapedBytes([]byte(s), make([]byte, 0, len(s)), UTF8Replace)
 	out = append(out, escaped...)
 	out = append(out, remainder...) // none expected for complete inputs
 	out = append(out, '"')

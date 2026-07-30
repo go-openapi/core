@@ -115,3 +115,31 @@ func SanitizedLen(src []byte) int {
 
 	return n
 }
+
+// Policy selects what a lexer or writer does with data that cannot be represented as a sequence of Unicode scalar
+// values: an ill-formed UTF-8 byte sequence, or a \u escape that does not denote one.
+//
+// It lives here, alongside the validator, so the lexers and the writers share one definition and cannot drift apart —
+// a document rejected on the way in and one refused on the way out must mean the same thing. Both packages alias it
+// (lexer.UTF8Policy, writer.UTF8Policy), so callers never name this internal package.
+//
+// The zero value is [PolicyStrict]: validation is on unless a caller opts out.
+type Policy uint8
+
+const (
+	// PolicyStrict rejects the data. This is the default on both sides.
+	PolicyStrict Policy = iota
+
+	// PolicyReplace substitutes U+FFFD — one per invalid byte, one per broken escape — so what is emitted is always
+	// valid UTF-8. See [Sanitize] for the exact granularity.
+	PolicyReplace
+
+	// PolicyPassthrough skips raw-byte validation entirely, letting ill-formed bytes through untouched.
+	//
+	// UNSAFE: only for data already known to be valid UTF-8. A \u escape still yields U+FFFD when broken, because an
+	// escape must always produce some rune.
+	PolicyPassthrough
+)
+
+// Validates reports whether the policy inspects raw bytes at all.
+func (p Policy) Validates() bool { return p != PolicyPassthrough }

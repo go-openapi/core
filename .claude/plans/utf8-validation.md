@@ -7,6 +7,58 @@
 > that hole).
 > Status legend: ✅ done · ⏳ in progress · ⬜ todo · 🔬 measure first.
 
+## OUTCOME — round 3 shipped (2026-07-30): the writers
+
+The writers had the mirror-image bug and one inconsistency of their own. Probed, not assumed:
+
+| input to `String*` | before | `Raw` before |
+|---|---|---|
+| invalid byte mid-string | silently → U+FFFD | passed through |
+| overlong / encoded surrogate | silently → 2–3× U+FFFD | passed through |
+| **truncated rune at end** | **errored** | passed through |
+
+So a trailing incomplete rune errored while every other fault was silently rewritten. Now one knob decides, and it is
+the *same type* the lexers use: `UTF8Policy` moved to `json/internal/utf8x` and both packages alias it, so a document
+refused on the way out and one rejected on the way in mean the same thing.
+
+**Default is `UTF8Strict`** (Fred's call). `WithUTF8Policy` is a `BufferedOption` (so `Indented`/`YAML` get it through
+their existing buffered-option wrappers); `Unbuffered` takes `WithUnbufferedUTF8Policy` — two names only because Go
+options are typed per writer.
+
+**What is checked** (Fred: *"not needed to check again what comes from token, only from raw []byte and io.Reader"*):
+
+- **Validated** — `String`, `StringBytes`, `StringRunes`, `StringCopy`, `Raw`, `RawCopy`, and `VerbatimValue` (which
+  renders through the ordinary string path).
+- **Trusted** — `Token` and `VerbatimToken`. Documented loophole: a document lexed with `UTF8Passthrough` can carry
+  ill-formed bytes in, and then `Token` *silently substitutes* U+FFFD (the escaper decodes as it goes, so output stays
+  valid but differs with no error) while `VerbatimToken` emits the bytes byte-for-byte, as verbatim requires.
+- **Unchecked** — `NumberBytes`/`NumberCopy`, which already document themselves as unchecked; non-ASCII in a number is
+  a grammar problem, not a UTF-8 one.
+
+**Two real bugs the new tests found, both fixed:**
+
+1. `RawCopy` and `StringCopy` validated each chunk independently, so a lead byte at the end of one read followed by a
+   non-continuation at the start of the next was tolerated by both halves and emitted. `RawCopy` now holds the
+   incomplete tail back and re-joins it with the next read (reads land at an offset in the buffer that leaves room, so
+   no second buffer and no allocation); `StringCopy`'s stitched sequence is now validated too — it was assembled by
+   the stitcher and had never passed through the chunk check.
+2. Under `UTF8Replace` a truncated tail still *errored* instead of substituting, on every escaped path. The remainder
+   is now policy-driven like everything else.
+
+**Cost** (`BenchmarkUTF8PolicyCallerPath`, strict vs passthrough):
+
+- escaped paths (`StringBytes`): within noise — the escaper dominates and the AVX2 validator is a rounding error
+  (ascii 1767 vs 1841 MB/s, cjk 279 vs 291);
+- `Raw`: **5.9 vs 8.8 GB/s (−33%)**. Raw is otherwise a memcpy, so a full validation pass is proportionally large.
+  That is the honest price of "Strict means the output really is UTF-8"; callers who had already validated can say
+  `UTF8Passthrough` and get the old speed back;
+- the token-driven path (what `BenchmarkWriters` measures) is untouched by construction.
+
+**Not done:** deduplicating the two escapers (`escape.go:escapedBytes` and `buffered.writeEscaped` still carry the
+same logic twice). Plan §10 item 3.1 hoped `utf8x` would unify them, but they differ in how they emit (append to a
+buffer vs write-with-flush), so the honest sharing is the *rule*, not the code — pinned by
+`TestWriterSubstitutionMatchesLexer`, which cross-checks writer output against `utf8x.Sanitize`.
+
 ## OUTCOME — round 2 shipped (2026-07-30)
 
 The simdutf/Keiser–Lemire `lookup4` validator is ported to avo AVX2 (`json/internal/utf8x/_asm` →
@@ -724,7 +776,7 @@ thing that would catch the *next* one.
   before trusting hand-written vector validation.
 - ✅ 2.4 Re-measure.
 
-**Round 3 — writers (own commit, after round 1 lands `utf8x`)**
+**Round 3 — ✅ shipped; default is UTF8Strict**
 
 The writers have the mirror-image bug, already half-handled:
 `writers/default-writer/escape.go:escapedBytes` silently substitutes U+FFFD for
@@ -733,13 +785,13 @@ invalid input bytes ("invalid runes are represented as �"), i.e. it hard-codes
 UTF-8, and silently mangling a caller's payload without telling them is the same class
 of complaint as the lexer's silent acceptance.
 
-- ⬜ 3.1 Re-express `escapedBytes`' default branch on `utf8x` so lexer and writer share
+- ⏸️ 3.1 (NOT done — the two escapers differ in how they emit; the *rule* is shared and pinned by a test instead, see the round-3 outcome) Re-express `escapedBytes`' default branch on `utf8x` so lexer and writer share
   one rule (§2.4) and one implementation.
-- ⬜ 3.2 Give the writers the same `UTF8Policy` knob. Open: what default? Symmetry with
+- ✅ 3.2 Give the writers the same `UTF8Policy` knob. **Default: Strict.** Open: what default? Symmetry with
   the lexer says Strict; today's behavior is Replace. **Strict** is the recommendation
   — a writer that silently corrupts is worse than one that refuses — but it is a
   louder breaking change than the lexer's, so it wants its own decision.
-- ⬜ 3.3 The `\u` escape emission path needs the same audit (surrogate pairs on output).
+- ✅ 3.3 The `\u` escape emission path needs the same audit (surrogate pairs on output).
 
 **Follow-ups (out of scope, filed)**
 

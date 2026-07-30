@@ -1,6 +1,10 @@
 package input
 
-import "io"
+import (
+	"io"
+
+	"github.com/go-openapi/core/json/internal/utf8x"
+)
 
 // Input holds the lexer's buffered-input and scan-cursor state: the buffer window and read position, the
 // value-accumulation scratch, the reader and refill buffers, the error state, and the two grammar flags the string
@@ -53,28 +57,13 @@ type Input struct {
 	sanitized []byte
 }
 
-// UTF8Policy selects what a lexer does with input that cannot be represented as a Unicode scalar value: an ill-formed
-// UTF-8 byte sequence in a string body, or a \u escape that does not form one.
-//
-// The zero value is [UTF8Strict], so validation is on unless a caller opts out.
-type UTF8Policy uint8
+// UTF8Policy is [utf8x.Policy]: the lexers and the writers share one definition so they cannot drift apart. The
+// lexer package aliases this in turn, so callers name neither internal package.
+type UTF8Policy = utf8x.Policy
 
+// The policy values, re-exported so the scanners read UTF8Strict rather than utf8x.PolicyStrict.
 const (
-	// UTF8Strict rejects the document: the lexer errors with codes.ErrInvalidUTF8 (ill-formed bytes) or
-	// codes.ErrSurrogateEscape (a broken \u surrogate pair). This is the default.
-	UTF8Strict UTF8Policy = iota
-
-	// UTF8Replace accepts the document and substitutes U+FFFD — one per invalid byte, one per broken escape — so an
-	// emitted value is always valid UTF-8. Only an offending value is rewritten (and therefore copied); a valid value is
-	// still aliased zero-copy.
-	UTF8Replace
-
-	// UTF8Passthrough skips raw-byte validation entirely: ill-formed bytes reach the caller untouched. A \u escape still
-	// decodes to U+FFFD when broken, because an escape must always produce some rune.
-	//
-	// UNSAFE: only for input already known to be valid UTF-8.
-	UTF8Passthrough
+	UTF8Strict      = utf8x.PolicyStrict
+	UTF8Replace     = utf8x.PolicyReplace
+	UTF8Passthrough = utf8x.PolicyPassthrough
 )
-
-// Validates reports whether the policy inspects raw string bytes at all.
-func (p UTF8Policy) Validates() bool { return p != UTF8Passthrough }
