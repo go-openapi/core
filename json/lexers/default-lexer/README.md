@@ -158,16 +158,18 @@ walking the source, never from the value, so they stay exact under every policy.
 at the right place — it just cannot assume the value it holds is the text that was there. Callers who need the source
 bytes should use `UTF8Strict` (and handle the error) or `UTF8Passthrough` (and validate downstream themselves).
 
-A leading UTF-8 BOM is consumed before any token exists, so it is not re-emitted either — the other documented
-exception to byte-exact round-tripping (RFC 8259 §8.1 asks implementations not to emit one).
+A leading UTF-8 BOM is the other documented exception to byte-exact round-tripping, for a different reason: it is
+consumed before any token exists, so it belongs to no token's leading space and is not re-emitted.
 
 **Cost.** Detection is fused into the string scan already being performed — every SWAR word and every AVX2 block is
 OR-accumulated, so "did this value contain a byte >= 0x80" is answered for free — and only values that actually carry
-one reach the validator. On the reference corpus, `UTF8Strict` versus no validation is statistically indistinguishable
-on the four ASCII-dominated workloads and costs ~10% on `twitter_status`, which is 30% non-ASCII by string bytes.
+one reach the validator — where an AVX2 port of simdutf's `lookup4` algorithm handles them at 5-12x the stdlib's rate.
+On the reference corpus, `UTF8Strict` versus no validation is statistically indistinguishable on the four
+ASCII-dominated workloads and costs ~6% (`L`) / ~2% (`VL`) on `twitter_status`, which is 30% non-ASCII by string bytes.
 
-The input must be UTF-8: a UTF-16 document is rejected with `ErrNotUTF8`. A leading UTF-8 BOM is currently rejected as
-an invalid token rather than skipped.
+The input must be UTF-8: a UTF-16 document is rejected with `ErrNotUTF8`. A leading UTF-8 BOM is accepted and
+consumed before the first token — RFC 8259 §8.1 permits ignoring one on input and asks implementations not to emit
+one, so it is not reproduced on output (see above).
 
 ## Conformance tests
 

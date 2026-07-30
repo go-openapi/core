@@ -664,7 +664,7 @@ with current verdicts and the expected post-change verdict:
 | **broken surrogate escapes, L≠VL** | `1st_valid_surrogate_2nd_invalid`, `incomplete_surrogates_escape_valid`, `inverted_surrogates_U+1D11E` | L accept / VL reject | **reject** (both) | §2.3 — real divergence |
 | **broken surrogate escapes, agreed** | `1st_surrogate_but_2nd_missing`, `incomplete_surrogate_pair`, `incomplete_surrogate_and_escape_valid`, `invalid_lonely_surrogate`, `invalid_surrogate`, `lone_second_surrogate`, `object_key_lone_2nd_surrogate` | reject | reject | already strict |
 | **UTF-16 input** | `utf16BE_no_BOM`, `utf16LE_no_BOM`, `UTF-16LE_with_BOM` | reject | reject | documented: UTF-8 only |
-| **BOM** | `structure_UTF-8_BOM_empty_object` | reject | **accept** | §2.8 — leading BOM is now trimmed (and carried in `VL.LeadingSpace()`) |
+| **BOM** | `structure_UTF-8_BOM_empty_object` | reject | **accept** | §2.8 — leading BOM is now consumed; NOT carried in `VL.LeadingSpace()`, see the round-2 outcome |
 | **number magnitude** | 10 `i_number_*` (huge exp, overflow, underflow) | accept | accept | correct by design — we don't evaluate numbers |
 | **depth** | `structure_500_nested_arrays` | accept | accept | correct since the stack rewrite |
 

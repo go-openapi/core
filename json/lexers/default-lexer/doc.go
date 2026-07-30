@@ -55,9 +55,10 @@
 //
 // Validation is not a second pass over the value: detection of non-ASCII bytes is fused into the string scan the
 // lexer already performs, so a pure-ASCII value — the overwhelmingly common case — is proven valid with no extra read
-// and no call, and only values that actually carry a byte >= 0x80 reach the validator. Measured on the reference
-// corpus, enabling it is free on ASCII-dominated documents and costs ~10% on heavily non-ASCII ones (twitter_status).
+// and no call, and only values that actually carry a byte >= 0x80 reach the validator, where an AVX2 kernel handles
+// them. Measured on the reference corpus, enabling it is free on ASCII-dominated documents and costs ~6% (L) / ~2%
+// (VL) on heavily non-ASCII ones (twitter_status).
 //
-// The input must be UTF-8: a UTF-16 document is rejected with [codes.ErrNotUTF8]. A leading UTF-8 BOM is currently
-// rejected as an invalid token rather than skipped.
+// The input must be UTF-8: a UTF-16 document is rejected with [codes.ErrNotUTF8]. A leading UTF-8 BOM is consumed
+// before the first token and is not re-emitted by [VL] (RFC 8259 §8.1 asks implementations not to emit one).
 package lexer
