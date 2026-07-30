@@ -52,6 +52,7 @@ Since we want it to be flexible, there are a few available options:
     (interned string keys, raw integer array indices). Opt-in and off by default — enabling it forfeits the
     zero-allocation guarantee (the path stack and retained keys allocate).
   * tunable context window for reporting errors
+  * strict/lax UTF8 validation
 
 Additional objectives:
 
@@ -101,6 +102,8 @@ Differences with `encoding/json/v2`
 | pull iterator  | ✅       ||  ⏸️      |
 | limit stack    | ✅       ||  ✅      |
 | limit tok size | ✅       ||  ❌      |    
+| valid UTF8     | ✅       ||  ✅      |    
+| unchecked UTF8 | ⬜       ||  ❌      |    
 
 Trade-offs when comparing to `github.com/go-json-experiment/json/jsontext` (stdlib `json/v2`).
 
@@ -217,6 +220,7 @@ to avoid. PGO is the supported lever.
 
 ## Roadmap
 
+* ND-JSON lexer
 * AVX2 support is currently provided as assembly kernels for amd64 only
 * AVX512 is likely overkill for our usage and I don't have the hardware to test it thoroughly
-* AVX support this will be eventually replaced by go native support for AV2 & AVX512 (currently experimental)
+* AVX support will be eventually replaced by go native support for AVX2 & AVX512 (currently experimental)
