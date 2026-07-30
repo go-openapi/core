@@ -55,10 +55,29 @@ type rawCase struct {
 	Fail *bool   `yaml:"fail"`
 }
 
+// normalizeLineEndings turns CRLF into LF.
+//
+// The fixtures are stored with LF and .gitattributes marks them -text so git never translates them, but a checkout
+// can still arrive with CRLF (an unmarked clone, an archive, a copy through a Windows tool). Every fixture is
+// normalised on the way in so the harness tests the document the suite wrote rather than the one the filesystem
+// delivered.
+//
+// This cannot destroy a meaningful CR: the suite writes an intended carriage return as "←", which suiteUnescape
+// turns into one AFTER this runs. No vendored fixture contains a raw CR byte.
+func normalizeLineEndings(s string) string {
+	if !strings.Contains(s, "\r") {
+		return s
+	}
+
+	return strings.ReplaceAll(s, "\r\n", "\n")
+}
+
 // suiteUnescape translates the suite's visible stand-ins back into the characters they represent.
 //
 // This is the Go equivalent of upstream's bin/YAMLTestSuite.pm `sub unescape`, and it is not optional: several cases
 // hinge on a trailing space or a hard tab that would otherwise be invisible (and would be stripped by an editor).
+//
+// It runs AFTER normalizeLineEndings, so "←" is the only way a CR enters a case.
 func suiteUnescape(s string) string {
 	s = strings.ReplaceAll(s, "␣", " ")
 
@@ -84,7 +103,14 @@ func suiteUnescape(s string) string {
 func loadSuite(t *testing.T) []suiteCase {
 	t.Helper()
 
-	dir := filepath.Join(currentDir(), "testdata", "yaml-test-suite", "src")
+	return loadSuiteFrom(t, filepath.Join(currentDir(), "testdata", "yaml-test-suite", "src"))
+}
+
+// loadSuiteFrom is [loadSuite] over an arbitrary fixture directory, so the loader itself can be exercised against a
+// differently-encoded copy of the suite (see the line-ending tests).
+func loadSuiteFrom(t *testing.T, dir string) []suiteCase {
+	t.Helper()
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("cannot read the vendored YAML test suite: %v", err)
@@ -100,6 +126,10 @@ func loadSuite(t *testing.T) []suiteCase {
 		if rerr != nil {
 			t.Fatalf("cannot read %s: %v", e.Name(), rerr)
 		}
+
+		// normalise before parsing: a CRLF fixture would otherwise reach goccy as a different document, and
+		// whether a block scalar keeps or drops the CR is not something to depend on
+		data = []byte(normalizeLineEndings(string(data)))
 
 		var raws []rawCase
 		if uerr := yaml.Unmarshal(data, &raws); uerr != nil {

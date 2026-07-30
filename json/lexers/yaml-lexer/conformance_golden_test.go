@@ -61,14 +61,19 @@ func checkRecordedGolden(t *testing.T, records map[string]string) {
 		t.Fatalf("cannot read %s (run with -update-golden to create it): %v", golden, err)
 	}
 
-	if string(want) == got {
+	// a golden checked out with CRLF must still compare equal: the file records verdicts, not bytes on a line
+	if normalizeLineEndings(string(want)) == got {
 		return
 	}
 
-	t.Errorf("recorded behavior changed for out-of-scope cases.\n"+
-		"If the change is intended, re-run with -update-golden and review the diff.\n%s",
-		diffRecorded(strings.Split(strings.TrimRight(string(want), "\n"), "\n"),
-			strings.Split(strings.TrimRight(got, "\n"), "\n")))
+	t.Errorf(
+		"recorded behavior changed for out-of-scope cases.\n"+
+			"If the change is intended, re-run with -update-golden and review the diff.\n%s",
+		diffRecorded(
+			strings.Split(strings.TrimRight(normalizeLineEndings(string(want)), "\n"), "\n"),
+			strings.Split(strings.TrimRight(got, "\n"), "\n"),
+		),
+	)
 }
 
 func diffRecorded(want, got []string) string {
