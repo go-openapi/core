@@ -7,45 +7,15 @@ package lexer_test
 // against NEW regressions. An entry that starts passing is reported as an error ("remove from xfail"), so the list
 // cannot rot into an excuse.
 //
-// Baseline: 204/272 documents with a JSON equivalent are accepted AND lex to that JSON; 85/94 invalid documents are
-// rejected. The 54 entries below group into five causes, in descending order of how much work they represent.
+// Baseline: 226/272 documents with a JSON equivalent are accepted AND lex to that JSON; 85/94 invalid documents are
+// rejected. The 32 entries below group into four causes; 14 of them (multiple documents) are a design boundary
+// rather than work.
 //
 // See CONFORMANCE.md for the full analysis.
 func conformanceXFail() map[string]string {
 	return map[string]string{
 		// ---------------------------------------------------------------------------------------------------
-		// 1. Non-scalar mapping keys (23). YL requires an object key to be a scalar, since JSON keys are
-		// strings. But most of these are keys that RESOLVE to a string -- an alias (`*a : v`), an anchored or
-		// tagged scalar (`&a k : v`, `!!str k : v`) -- and the suite's own JSON expectation shows the resolved
-		// string as the key. Supporting them is a real feature gap, not a scope boundary. The genuinely
-		// out-of-scope ones are complex keys (`? [a, b] : c`), which JSON cannot express at all.
-		// ---------------------------------------------------------------------------------------------------
-		"26DV": "non-scalar mapping key",
-		"2SXE": "non-scalar mapping key",
-		"2XXW": "non-scalar mapping key",
-		"5WE3": "non-scalar mapping key",
-		"74H7": "non-scalar mapping key",
-		"7BMT": "non-scalar mapping key",
-		"7FWL": "non-scalar mapping key",
-		"7W2P": "non-scalar mapping key",
-		"A2M4": "non-scalar mapping key",
-		"CN3R": "non-scalar mapping key",
-		"CT4Q": "non-scalar mapping key",
-		"E76Z": "non-scalar mapping key",
-		"GH63": "non-scalar mapping key",
-		"HMQ5": "non-scalar mapping key",
-		"JTV5": "non-scalar mapping key",
-		"L94M": "non-scalar mapping key",
-		"RR7F": "non-scalar mapping key",
-		"S9E8": "non-scalar mapping key",
-		"U3XV": "non-scalar mapping key",
-		"WZ62": "non-scalar mapping key",
-		"X8DW": "non-scalar mapping key",
-		"ZH7C": "non-scalar mapping key",
-		"ZWK4": "non-scalar mapping key",
-
-		// ---------------------------------------------------------------------------------------------------
-		// 2. Multiple documents (14). A JSON token stream has one root, so YL rejects a multi-document stream.
+		// 1. Multiple documents (14). A JSON token stream has one root, so YL rejects a multi-document stream.
 		// The suite's json field for these holds several JSON values in sequence. Out of scope until the
 		// ND-JSON work lands (see the lexers README roadmap), at which point they become an NDJSON mode.
 		// ---------------------------------------------------------------------------------------------------
@@ -65,7 +35,7 @@ func conformanceXFail() map[string]string {
 		"ZYU8":   "multiple documents",
 
 		// ---------------------------------------------------------------------------------------------------
-		// 3. Invalid documents we ACCEPT (9). Real conformance bugs, and the most valuable group: we are more
+		// 2. Invalid documents we ACCEPT (9). Real conformance bugs, and the most valuable group: we are more
 		// permissive than YAML allows, mostly around flow collections, comments and tabs. Inherited from the
 		// underlying goccy parser rather than introduced by our walk, so each needs to be confirmed against
 		// goccy upstream before we decide whether to pre-validate ourselves.
@@ -81,10 +51,16 @@ func conformanceXFail() map[string]string {
 		"YJV2":   "we accept an invalid document",
 
 		// ---------------------------------------------------------------------------------------------------
-		// 4. Accepted, but the token stream differs from the expected JSON (5). Semantic divergences in how a
-		// scalar is resolved -- tags (!!binary, !!str), trailing whitespace, flow nodes. Each needs reading
-		// individually; they are the subtlest of the five groups because nothing errors.
+		// 3. Accepted, but the token stream differs from the expected JSON (6). Semantic divergences in how a
+		// scalar is resolved -- tags (!!binary, !!str), trailing whitespace, flow nodes.
+		//
+		// RR7F is not one of them: it is a defect in the FIXTURE. Its yaml is "a: 4.2 / ? d / : 23", and its own
+		// event stream and canonical dump both order the keys a, d -- but its json field writes d first. The
+		// suite compares loaded data as unordered maps, so nothing there ever checked its json text against its
+		// own tree. We keep key order (a JSON token stream is ordered, and so is our model), so we match the
+		// event stream and diverge from the json text. Reported upstream rather than worked around.
 		// ---------------------------------------------------------------------------------------------------
+		"RR7F":   "fixture defect: its json field contradicts its own event stream on key order",
 		"565N":   "token stream differs from the expected JSON",
 		"L24T/1": "token stream differs from the expected JSON",
 		"LE5A":   "token stream differs from the expected JSON",
@@ -92,7 +68,7 @@ func conformanceXFail() map[string]string {
 		"UGM3":   "token stream differs from the expected JSON",
 
 		// ---------------------------------------------------------------------------------------------------
-		// 5. Valid documents rejected by the underlying parser (3). goccy fails to parse these at all, so the
+		// 4. Valid documents rejected by the underlying parser (3). goccy fails to parse these at all, so the
 		// fix is upstream (or a pre-pass of our own).
 		// ---------------------------------------------------------------------------------------------------
 		"4MUZ/2": "goccy fails to parse a valid document",

@@ -4,12 +4,16 @@ Baseline measured against the vendored [YAML Test Suite](testdata/yaml-test-suit
 (revision `da267a5c`, 351 files → **406 cases**), by `TestConformanceYAML`.
 
 ```
-accept + token stream matches the expected JSON   204 / 272   (75%)
+accept + token stream matches the expected JSON   226 / 272   (83%)
 invalid document rejected                          85 /  94   (90%)
 recorded only (no single-root JSON equivalent)     63
-known divergences (conformanceXFail)               54
+known divergences (conformanceXFail)               32
   of which out of scope by design                  14
 ```
+
+Resolved-scalar mapping keys landed (22 cases): a key carrying an explicit-key marker,
+a tag, an anchor or an alias now resolves to the string it denotes. See §"Resolved keys"
+below for what remains.
 
 ## What is being measured
 
@@ -20,7 +24,7 @@ streams are identical.
 
 That framing matters for reading the numbers: a case `YL` fails is not necessarily a
 YAML bug. It may be a construct JSON cannot express, in which case being unable to lex
-it is correct behavior. The 54 xfail entries below are split accordingly — 14 of them are the design boundary
+it is correct behavior. The 32 xfail entries below are split accordingly — 14 of them are the design boundary
 rather than work.
 
 Three buckets, mirroring the JSON suite's `y_`/`n_`/`i_` split:
@@ -44,8 +48,8 @@ over the same suite — "is the loaded data equal to the `json` field" — which
 question we ask. Its denominator is 401 (308 valid + 93 invalid).
 
 Our comparable slice is 366 cases (272 with a single-root JSON expectation + 94 invalid),
-scoring **289 → 79%**. Counting the 40 cases with no JSON equivalent as misses instead —
-a stricter reading — gives **289/406 → 71%**. So we sit somewhere in **71–79%** depending
+scoring **311 → 85%**. Counting the 40 cases with no JSON equivalent as misses instead —
+a stricter reading — gives **311/406 → 77%**. So we sit somewhere in **77–85%** depending
 on how the out-of-scope cases are counted.
 
 | implementation | JSON comparison |
@@ -54,9 +58,9 @@ on how the out-of-scope cases are counted.
 | JS yaml | 92% |
 | Perl YAML::PP | 92% |
 | Haskell HsYAML | 91% |
+| **`YL` (this lexer)** | **77–85%** |
 | Python ruamel.yaml | 78% |
 | Perl YAML::PP+libyaml | 78% |
-| **`YL` (this lexer)** | **71–79%** |
 | JS js-yaml | 76% |
 | Ruby psych | 76% |
 | Go go-yaml | 76% |
@@ -77,32 +81,35 @@ Read that carefully rather than as a ranking — three things make it not apples
   over-permissive accepts and the 3 parse failures — are goccy's behavior, not ours, and we
   cannot beat it without pre-validating ourselves.
 
-The useful takeaway: **we are in the same band as the mainstream loaders** (PyYAML, psych,
-go-yaml, ruamel, js-yaml) and clearly behind the four leaders. And the single biggest gap is
-ours to close: fixing resolved-scalar keys (group 1 below, 23 cases) would put the
-comparable slice at roughly **85%**, above every implementation in the middle band.
+The useful takeaway: **we are now above the mainstream loaders** (PyYAML 75%, psych 76%,
+go-yaml 76%, ruamel 78%) and below the four leaders. Resolved-scalar keys were the single
+biggest gap and are now closed, which is what moved 79% → 85%.
 
-## The 54 divergences
+## The 32 remaining entries
 
-### 1. Non-scalar mapping keys — 23 cases
+### Resolved keys — done (22 cases)
 
-`YL` requires an object key to be a scalar, because JSON keys are strings. Most of
-these, however, are keys that *resolve* to a string:
+A JSON object key is a string, so `YL` only accepts a key denoting a scalar. YAML lets a key
+carry node properties and indirection that JSON has no place for but that do not stop it being
+a string:
 
 ```yaml
-top3: &node3
-  *alias1 : scalar3      # the suite expects {"scalar1": "scalar3"}
+? explicit key : v     # MappingKeyNode
+!!str key : v          # TagNode
+&anchor key : v        # AnchorNode
+*alias : v             # AliasNode -- resolves through the anchor table
 ```
 
-An alias, an anchored scalar (`&a key : v`) or a tagged one (`!!str key : v`) is
-rejected today, though the resolved key is an ordinary string and the suite's own JSON
-shows it as such. **This is a feature gap, not a scope boundary**, and it is the
-largest single group.
+and combinations (`? !!str &a foo`). These were rejected as "complex". `walk.go:resolveKey`
+now peels each wrapper until a scalar is reached, which is exactly what the suite's own JSON
+equivalent shows for these documents. An anchor written on a *key* is registered too, so a
+later `*a` resolves to it.
 
-Genuinely out of scope within this group: explicit complex keys (`? [a, b] : c`),
-which JSON cannot express at all.
+What stays rejected: a key that really denotes a sequence or mapping. Note that written out
+directly (`? [a, b] : v`) goccy refuses the document before we see it — our own `ErrComplexKey`
+is reached only through indirection, an alias naming a collection.
 
-### 2. Multiple documents — 14 cases (out of scope by design)
+### 1. Multiple documents — 14 cases (out of scope by design)
 
 A JSON token stream has one root, so a `%YAML`/`---` multi-document stream is rejected.
 `YL`'s model is structurally single-document; this is an acknowledged boundary, not a
@@ -114,7 +121,7 @@ is **40, not 54**.
 one document. Streams whose expectation is genuinely several JSON values fall into the
 recorded bucket instead.)
 
-### 3. Invalid documents we accept — 9 cases
+### 2. Invalid documents we accept — 9 cases
 
 The most valuable group: we are **more permissive than YAML allows**.
 
@@ -134,20 +141,28 @@ All are inherited from the underlying `goccy/go-yaml` parser rather than introdu
 our walk — flow collections, comment placement and tabs. Each needs confirming against
 goccy upstream before deciding whether to report it there or pre-validate ourselves.
 
-### 4. Accepted, but the token stream differs — 5 cases
+### 3. Accepted, but the token stream differs — 6 cases
 
 ```
-565N  Construct Binary                   (!!binary tag)
+565N   Construct Binary                   (!!binary tag)
 L24T/1 Trailing line of spaces
-LE5A  Spec Example 7.24. Flow Nodes
-S4JQ  Spec Example 6.28. Non-Specific Tags
-UGM3  Spec Example 2.27. Invoice
+LE5A   Spec Example 7.24. Flow Nodes
+S4JQ   Spec Example 6.28. Non-Specific Tags
+UGM3   Spec Example 2.27. Invoice
+RR7F   Mixed Block Mapping                (see below -- not ours)
 ```
 
-Scalar-resolution divergences. The subtlest group, because nothing errors — the
-document is accepted and the values are simply not the ones the suite expects.
+The first five are scalar-resolution divergences, and the subtlest group: nothing errors,
+the document is accepted and the values are simply not the ones the suite expects.
 
-### 5. Valid documents the parser rejects — 3 cases
+`RR7F` is a **defect in the fixture**. Its YAML is `a: 4.2 / ? d / : 23`; its own event
+stream (`+MAP =VAL :a =VAL :4.2 =VAL :d =VAL :23`) and its canonical `dump` both order the
+keys `a, d`, but its `json` field writes `d` first. The suite compares loaded data as
+unordered maps, so nothing there ever checked its JSON text against its own tree. We keep
+key order — a JSON token stream is ordered, and so is our model — so we match the event
+stream and diverge from the JSON text. Worth reporting upstream to yaml-test-suite.
+
+### 4. Valid documents the parser rejects — 3 cases
 
 `goccy` fails to parse these at all, so the fix is upstream (or a pre-pass of our own):
 
@@ -161,24 +176,25 @@ document is accepted and the values are simply not the ones the suite expects.
 Which YAML *features* are involved (a case carries several tags, so these overlap):
 
 ```
-spec 22   mapping 21   tag 16   explicit-key 12   flow 10   sequence 10
-directive 8   alias 7   comment 7   unknown-tag 7   whitespace 7   error 6
-header 6   indent 6   anchor 5   1.3-err 4   double 4   …
+spec 14   tag 11   directive 8   flow 7   error 6   header 6   sequence 6
+indent 5   unknown-tag 5   whitespace 5   double 4   alias 3   comment 3   …
 ```
+
+`mapping`, `explicit-key` and `anchor` have dropped out of the top of this list entirely —
+that is the resolved-keys work showing up.
 
 ## Reading this as a work list
 
 In rough order of value per unit of effort:
 
-1. **Resolved-scalar keys** (group 1) — 23 cases, one coherent feature: resolve an
-   alias/anchor/tag on the key side and use the resulting scalar. Takes the comparable
-   slice from 79% to **85%**, above every implementation in the matrix's middle band.
-   Adding groups 3 and 4 on top would reach **89%**, within reach of the leaders.
-2. **Over-permissiveness** (group 3) — 9 cases, and the only group where we accept
-   documents we should reject. Worth confirming against goccy first.
-3. **Scalar resolution** (group 4) — 5 cases, each needing individual reading.
-4. ~~**Multi-document** (group 2)~~ — not on the list: out of scope by design (see above).
-5. **Upstream parse failures** (group 5) — 3 cases, not ours to fix directly.
+1. ~~**Resolved-scalar keys**~~ — **done**, 22 cases, 79% → 85%.
+2. **Over-permissiveness** (group 2) — 9 cases, and the only group where we accept
+   documents we should reject. All goccy's behaviour; confirm upstream before working
+   around them (see `PROPOSALS-go-openapi.md` in the goccy checkout).
+3. **Scalar resolution** (group 3) — 5 cases, each needing individual reading. Closing
+   these and group 2 would reach roughly **89%**, within reach of the leaders.
+4. ~~**Multi-document** (group 1)~~ — not on the list: out of scope by design (see above).
+5. **Upstream parse failures** (group 4) — 3 cases, not ours to fix directly.
 
 ## Maintaining this
 

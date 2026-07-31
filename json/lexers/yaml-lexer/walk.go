@@ -204,7 +204,7 @@ func (l *YL) resolveMapping(values []*ast.MappingValueNode) []entryKV {
 		if _, isMerge := mv.Key.(*ast.MergeKeyNode); isMerge {
 			continue
 		}
-		if ks, ok := keyString(mv.Key); ok {
+		if ks, _, ok := l.scalarKeyResolved(mv.Key); ok {
 			explicit[ks] = true
 		}
 	}
@@ -239,7 +239,7 @@ func (l *YL) resolveMapping(values []*ast.MappingValueNode) []entryKV {
 
 				continue
 			}
-			ks, ok := keyString(mv.Key)
+			ks, _, ok := l.scalarKeyResolved(mv.Key)
 			if !ok {
 				l.err = ErrComplexKey
 
@@ -303,20 +303,106 @@ func (l *YL) mergeEntries(src ast.Node) []*ast.MappingValueNode {
 
 // keyString returns the string form of a scalar mapping key (matching emitKey's token value),
 // used for merge de-duplication. ok is false for a non-scalar (complex) key.
-func keyString(key ast.MapKeyNode) (string, bool) {
+// maxKeyUnwrap bounds the resolveKey recursion. A key can legitimately stack node properties
+// ("? !!str &a foo"), but only a handful deep; the bound is what stops an alias chain that
+// resolves back into itself from recursing forever.
+const maxKeyUnwrap = 16
+
+// scalarKey reduces a mapping key to the scalar it denotes, returning its text and the token to
+// report a position at.
+//
+// A JSON object key is a string, so YL only accepts a key that resolves to a scalar. "Resolves"
+// is doing real work, because YAML lets a key carry node properties and indirection that the
+// JSON data model has no place for but that do not stop it being a string:
+//
+//	? explicit key : v     an explicit key (MappingKeyNode) wrapping any node
+//	!!str key : v          a tagged key (TagNode)
+//	&anchor key : v        an anchored key (AnchorNode)
+//	*alias : v             an alias to a scalar defined elsewhere (AliasNode)
+//
+// and combinations of those ("? !!str foo"). Each wrapper is peeled until a scalar is reached;
+// what comes out is an ordinary string key, which is exactly what the YAML Test Suite's own JSON
+// equivalent shows for these documents.
+//
+// A key that resolves to a sequence or a mapping is genuinely outside the JSON data model and
+// still fails with ErrComplexKey.
+//
+// Aliases are resolved against the anchor table, so this is a method: an alias key can only be
+// resolved once the anchor it names has been walked, which the single forward pass guarantees
+// (YAML requires an anchor to be defined before it is used).
+func (l *YL) resolveKey(key ast.Node, depth int) (ast.Node, bool) {
+	if depth > maxKeyUnwrap {
+		return nil, false
+	}
+
 	switch k := key.(type) {
-	case *ast.StringNode:
-		return k.Value, true
-	case *ast.IntegerNode:
-		return k.Token.Value, true
-	case *ast.FloatNode:
-		return k.Token.Value, true
-	case *ast.BoolNode:
-		return k.Token.Value, true
-	case *ast.NullNode:
-		return k.Token.Value, true
+	case *ast.MappingKeyNode: // "? key"
+		return l.resolveKey(k.Value, depth+1)
+
+	case *ast.TagNode: // "!!str key"
+		return l.resolveKey(k.Value, depth+1)
+
+	case *ast.AnchorNode: // "&a key" -- also registers the anchor, so a later "*a" resolves
+		if name := anchorName(k.Name); name != "" {
+			l.anchors[name] = k.Value
+		}
+
+		return l.resolveKey(k.Value, depth+1)
+
+	case *ast.AliasNode: // "*a"
+		name := anchorName(k.Value)
+		target, ok := l.anchors[name]
+		if !ok {
+			return nil, false
+		}
+		if l.expanding[name] {
+			return nil, false // a key aliasing its own definition
+		}
+		l.expanding[name] = true
+		node, resolved := l.resolveKey(target, depth+1)
+		delete(l.expanding, name)
+
+		return node, resolved
+
 	default:
-		return "", false
+		return key, true
+	}
+}
+
+// scalarKey is [YL.resolveKey] followed by the scalar test: it returns the key's text and the
+// token whose position the Key token should report, or ok=false when the key is not a scalar.
+//
+// The position is the resolved scalar's own token, so the reported location always holds the
+// text the token carries. For an alias that is the anchor DEFINITION site, consistent with how
+// alias-expanded values are positioned (see walkAlias).
+func (l *YL) scalarKeyResolved(key ast.MapKeyNode) (string, *yamltoken.Token, bool) {
+	node, ok := l.resolveKey(key, 0)
+	if !ok {
+		return "", nil, false
+	}
+
+	return scalarKey(node)
+}
+
+// scalarKey reads a scalar node's text and token. It does no unwrapping: callers that may see a
+// wrapped key go through [YL.scalarKeyResolved].
+func scalarKey(node ast.Node) (string, *yamltoken.Token, bool) {
+	switch k := node.(type) {
+	case *ast.StringNode:
+		return k.Value, k.Token, true
+	case *ast.IntegerNode:
+		return k.Token.Value, k.Token, true
+	case *ast.FloatNode:
+		return k.Token.Value, k.Token, true
+	case *ast.BoolNode:
+		return k.Token.Value, k.Token, true
+	case *ast.NullNode:
+		return k.Token.Value, k.Token, true
+	case *ast.LiteralNode:
+		// a block scalar used as an explicit key ("? |" ...): its text is the folded content
+		return k.Value.Value, k.Start, true
+	default:
+		return "", nil, false
 	}
 }
 
@@ -416,23 +502,21 @@ func (l *YL) emitKey(key ast.MapKeyNode, lvl int) {
 		return
 	}
 
-	switch k := key.(type) {
-	case *ast.StringNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Value)), posOf(k.Token), lvl)
-	case *ast.IntegerNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.FloatNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.BoolNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.NullNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.MergeKeyNode:
-		// D5 (deferred): the "<<" merge key is a later increment.
+	if _, isMerge := key.(*ast.MergeKeyNode); isMerge {
+		// a "<<" reaching here was not resolved away by resolveMapping
 		l.err = codes.ErrInvalidToken
-	default:
-		l.err = ErrComplexKey
+
+		return
 	}
+
+	text, tok, ok := l.scalarKeyResolved(key)
+	if !ok {
+		l.err = ErrComplexKey
+
+		return
+	}
+
+	l.putValue(token.MakeWithValue(token.Key, []byte(text)), posOf(tok), lvl)
 }
 
 // walkInteger emits an integer, unconverted when its spelling is already a JSON number and

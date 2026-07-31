@@ -6,7 +6,7 @@
 4MUZ/1	accept	Flow mapping colon on line after key
 5TYM	reject	Spec Example 6.21. Local Tag Prefix
 6BFJ	reject	Mapping, key and flow sequence item anchors
-6M2F	reject	Aliases in Explicit Block Mapping
+6M2F	accept	Aliases in Explicit Block Mapping
 6PBE	reject	Zero-indented sequences in explicit mapping keys
 6WLZ	reject	Spec Example 6.18. Primary Tag Handle [1.3]
 6XDY	accept	Two document start markers
@@ -21,7 +21,7 @@
 9WXW	reject	Spec Example 6.18. Primary Tag Handle
 AVM7	accept	Empty Stream
 CFD4	reject	Empty implicit key in single pair flow sequences
-DFF7	reject	Spec Example 7.16. Flow Mapping Entries
+DFF7	accept	Spec Example 7.16. Flow Mapping Entries
 FH7J	reject	Tags on Empty Scalars
 FRK4	reject	Spec Example 7.3. Completely Empty Flow Nodes
 HWV9	accept	Document-end marker
