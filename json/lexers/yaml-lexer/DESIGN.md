@@ -66,6 +66,17 @@ a non-issue.
   them. Object = `{ key value key value }`, array = `[ value value ]`. (Unlike `L`, this is
   not an option — a verbatim/separator mode would only matter to a round-tripping consumer,
   which `YL` explicitly is not.)
+
+  This is a decision, not a limitation, and it has been revisited: goccy exposes every
+  separator we would need — `MappingValueNode.Start` is the `:` of each pair, and
+  `SequenceEntryNode.Start` the `-` of each block item — so emitting them would be easy.
+  It is declined because a separator mode is error-prone for no gain: consumers index by
+  the *value* tokens (JSON pointer, position, colour by kind), and YAML's separators do not
+  map onto JSON's anyway. A block `-` has no JSON counterpart, so it would need either a
+  new delimiter kind in the shared `token` package — a JSON-side change for a YAML-only
+  need — or a `Comma` token whose `String()` reports the wrong character. Neither is worth
+  it. (For the record, goccy also does not expose the `,` between the pairs of a *flow*
+  mapping at all, so even a separator mode could not be complete.)
 - **`IndentLevel` matches `L`'s convention.** Openers and interior tokens sit at the
   container's level; a **closing** `}` / `]` reports the *enclosing* level (the level it
   returns to), because `L` pops the container before emitting the closer. `YL` mirrors that

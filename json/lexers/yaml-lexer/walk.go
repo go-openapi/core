@@ -1,7 +1,9 @@
 package lexer
 
 import (
+	"bytes"
 	"strings"
+	"unicode/utf8"
 
 	codes "github.com/go-openapi/core/json/lexers/error-codes"
 	"github.com/go-openapi/core/json/lexers/token"
@@ -20,12 +22,17 @@ func (l *YL) build() {
 		return
 	}
 
-	f, err := safeParse(l.data)
+	src := l.stripBOM()
+
+	f, err := safeParse(src)
 	if err != nil {
 		l.err = err
 
 		return
 	}
+
+	l.indexLines(src)
+	defer func() { l.lineStarts, l.lineASCII = nil, nil }()
 
 	switch len(f.Docs) {
 	case 0:
@@ -48,6 +55,102 @@ func (l *YL) build() {
 	l.anchors = nil
 	l.expanding = nil
 	l.merging = nil
+}
+
+// indexLines records where each line of src starts and whether it is pure ASCII, so a
+// (line, column) pair can be turned back into a byte offset. Built once per build and dropped
+// when it ends; the ASCII flag rides along for free, since this pass already reads every byte.
+func (l *YL) indexLines(src []byte) {
+	lines := bytes.Count(src, newline) + 1
+	l.lineStarts = make([]int, 1, lines) // line 1 starts at 0
+	l.lineASCII = make([]bool, 0, lines)
+
+	ascii := true
+	for i, b := range src {
+		switch {
+		case b == '\n':
+			l.lineASCII = append(l.lineASCII, ascii)
+			l.lineStarts = append(l.lineStarts, i+1)
+			ascii = true
+		case b >= utf8.RuneSelf:
+			ascii = false
+		}
+	}
+	l.lineASCII = append(l.lineASCII, ascii) // the last line, which need not be terminated
+}
+
+// byteOffset converts a goccy (line, column) pair into a byte offset into the parsed source.
+//
+// We do NOT use goccy's own Position.Offset, for two independent reasons:
+//
+//   - it is a 1-based RUNE index, not a byte offset (goccy's scanner holds the source as
+//     []rune), so it cannot address the bytes of any document containing non-ASCII text, and
+//     drifts further with every multi-byte character before the token;
+//   - it loses one more per comment line preceding the token (goccy #856).
+//
+// Those two errors have opposite signs, so on an ASCII document with exactly one comment they
+// cancel and pos.Offset looks right. It is not: patching either one alone leaves the other.
+//
+// Line and Column are correct under both defects, so deriving from them is the only thing that
+// can be made correct without a fix upstream. See PROPOSALS-go-openapi.md §1b in the goccy
+// checkout for the reproducers and what we intend to ask for.
+func (l *YL) byteOffset(line, col int) uint64 {
+	if line < 1 || line > len(l.lineStarts) || col < 1 {
+		return 0 // no position we can honestly claim; put() reports the start of the input
+	}
+
+	src := l.data[l.bomBytes:]
+	start := l.lineStarts[line-1]
+	end := len(src)
+	if line < len(l.lineStarts) {
+		end = l.lineStarts[line]
+	}
+
+	// A column counts characters, not bytes, so in general we have to walk the line. On a pure
+	// ASCII line -- nearly all of them, in nearly every document -- the two coincide and we can
+	// index straight to it.
+	i := start + col - 1
+	if !l.lineASCII[line-1] {
+		i = start
+		for range col - 1 {
+			if i >= end {
+				break
+			}
+			i++
+			for i < end && src[i]&0xC0 == 0x80 { // skip the rune's continuation bytes
+				i++
+			}
+		}
+	}
+
+	return uint64(min(i, end)) //nolint:gosec // an index into a []byte is never negative
+}
+
+// newline is the line separator scanned for by indexLines.
+var newline = []byte{'\n'} //nolint:gochecknoglobals // immutable 1-byte constant
+
+// bomUTF8 is the UTF-8 encoding of U+FEFF, the byte order mark.
+var bomUTF8 = []byte{0xEF, 0xBB, 0xBF} //nolint:gochecknoglobals // immutable 3-byte constant
+
+// stripBOM returns the input with a leading UTF-8 byte order mark removed, recording its width
+// so reported positions can be put back on the caller's coordinates.
+//
+// YAML 1.2 allows a document to be prefixed by a BOM and it is not part of the content, but
+// goccy does not strip it: it becomes the first character of the first token, which does not
+// merely dirty a value -- it changes the parse. A BOM followed by "{}" comes back as the
+// SCALAR "<BOM>{}" rather than an empty mapping, and a BOM followed by "a: 1" yields the key
+// "<BOM>a". So the mark has to go before the parser sees it, not be trimmed off afterwards.
+//
+// The JSON lexer L consumes a leading BOM the same way (see input.CheckBOM), which is what the
+// FuzzYL JSON-subset differential compares against.
+func (l *YL) stripBOM() []byte {
+	if !bytes.HasPrefix(l.data, bomUTF8) {
+		return l.data
+	}
+
+	l.bomBytes = len(bomUTF8)
+
+	return l.data[len(bomUTF8):]
 }
 
 // safeParse runs the goccy parser, converting a recoverable panic into an error so a
@@ -100,11 +203,13 @@ func (l *YL) walkValue(node ast.Node, lvl int) {
 	case *ast.MappingNode:
 		l.walkMapping(n, lvl)
 	case *ast.MappingValueNode:
-		// a single-entry mapping that goccy did not wrap in a MappingNode
+		// a single-entry mapping that goccy did not wrap in a MappingNode; only block style
+		// produces one, and its token is the pair's ":" (see patchBlockSpan)
 		l.walkMappingEntries(
 			[]*ast.MappingValueNode{n},
 			posOf(n.GetToken()),
 			posOf(n.GetToken()),
+			false,
 			lvl,
 		)
 	case *ast.SequenceNode:
@@ -129,7 +234,7 @@ func (l *YL) walkValue(node ast.Node, lvl int) {
 
 // walkMapping emits an object: { key : value , … }.
 func (l *YL) walkMapping(n *ast.MappingNode, lvl int) {
-	l.walkMappingEntries(n.Values, posOf(n.Start), posOf(n.End), lvl)
+	l.walkMappingEntries(n.Values, posOf(n.Start), posOf(n.End), n.IsFlowStyle, lvl)
 }
 
 // walkMappingEntries emits the object delimiters around a list of key/value entries.
@@ -137,6 +242,7 @@ func (l *YL) walkMapping(n *ast.MappingNode, lvl int) {
 func (l *YL) walkMappingEntries(
 	values []*ast.MappingValueNode,
 	start, end *yamltoken.Position,
+	flow bool,
 	lvl int,
 ) {
 	inner := lvl + 1
@@ -144,6 +250,7 @@ func (l *YL) walkMappingEntries(
 		return
 	}
 
+	openIdx := len(l.toks)
 	l.emitDelim(token.OpeningBracket, start, inner)
 	if hasMergeKey(values) {
 		// D5: resolve "<<" merge keys with RFC precedence (explicit keys win, earlier merges
@@ -167,6 +274,10 @@ func (l *YL) walkMappingEntries(
 	// The closing delimiter reports the ENCLOSING level (the level it returns to), matching
 	// the JSON lexer L, which pops the container before emitting the closer.
 	l.emitDelim(token.ClosingBracket, end, lvl)
+
+	if !flow {
+		l.patchBlockSpan(openIdx)
+	}
 }
 
 // entryKV is a resolved mapping member (after merge-key expansion).
@@ -196,7 +307,7 @@ func (l *YL) resolveMapping(values []*ast.MappingValueNode) []entryKV {
 		if _, isMerge := mv.Key.(*ast.MergeKeyNode); isMerge {
 			continue
 		}
-		if ks, ok := keyString(mv.Key); ok {
+		if ks, _, ok := l.scalarKeyResolved(mv.Key); ok {
 			explicit[ks] = true
 		}
 	}
@@ -231,7 +342,7 @@ func (l *YL) resolveMapping(values []*ast.MappingValueNode) []entryKV {
 
 				continue
 			}
-			ks, ok := keyString(mv.Key)
+			ks, _, ok := l.scalarKeyResolved(mv.Key)
 			if !ok {
 				l.err = ErrComplexKey
 
@@ -295,20 +406,106 @@ func (l *YL) mergeEntries(src ast.Node) []*ast.MappingValueNode {
 
 // keyString returns the string form of a scalar mapping key (matching emitKey's token value),
 // used for merge de-duplication. ok is false for a non-scalar (complex) key.
-func keyString(key ast.MapKeyNode) (string, bool) {
+// maxKeyUnwrap bounds the resolveKey recursion. A key can legitimately stack node properties
+// ("? !!str &a foo"), but only a handful deep; the bound is what stops an alias chain that
+// resolves back into itself from recursing forever.
+const maxKeyUnwrap = 16
+
+// scalarKey reduces a mapping key to the scalar it denotes, returning its text and the token to
+// report a position at.
+//
+// A JSON object key is a string, so YL only accepts a key that resolves to a scalar. "Resolves"
+// is doing real work, because YAML lets a key carry node properties and indirection that the
+// JSON data model has no place for but that do not stop it being a string:
+//
+//	? explicit key : v     an explicit key (MappingKeyNode) wrapping any node
+//	!!str key : v          a tagged key (TagNode)
+//	&anchor key : v        an anchored key (AnchorNode)
+//	*alias : v             an alias to a scalar defined elsewhere (AliasNode)
+//
+// and combinations of those ("? !!str foo"). Each wrapper is peeled until a scalar is reached;
+// what comes out is an ordinary string key, which is exactly what the YAML Test Suite's own JSON
+// equivalent shows for these documents.
+//
+// A key that resolves to a sequence or a mapping is genuinely outside the JSON data model and
+// still fails with ErrComplexKey.
+//
+// Aliases are resolved against the anchor table, so this is a method: an alias key can only be
+// resolved once the anchor it names has been walked, which the single forward pass guarantees
+// (YAML requires an anchor to be defined before it is used).
+func (l *YL) resolveKey(key ast.Node, depth int) (ast.Node, bool) {
+	if depth > maxKeyUnwrap {
+		return nil, false
+	}
+
 	switch k := key.(type) {
-	case *ast.StringNode:
-		return k.Value, true
-	case *ast.IntegerNode:
-		return k.Token.Value, true
-	case *ast.FloatNode:
-		return k.Token.Value, true
-	case *ast.BoolNode:
-		return k.Token.Value, true
-	case *ast.NullNode:
-		return k.Token.Value, true
+	case *ast.MappingKeyNode: // "? key"
+		return l.resolveKey(k.Value, depth+1)
+
+	case *ast.TagNode: // "!!str key"
+		return l.resolveKey(k.Value, depth+1)
+
+	case *ast.AnchorNode: // "&a key" -- also registers the anchor, so a later "*a" resolves
+		if name := anchorName(k.Name); name != "" {
+			l.anchors[name] = k.Value
+		}
+
+		return l.resolveKey(k.Value, depth+1)
+
+	case *ast.AliasNode: // "*a"
+		name := anchorName(k.Value)
+		target, ok := l.anchors[name]
+		if !ok {
+			return nil, false
+		}
+		if l.expanding[name] {
+			return nil, false // a key aliasing its own definition
+		}
+		l.expanding[name] = true
+		node, resolved := l.resolveKey(target, depth+1)
+		delete(l.expanding, name)
+
+		return node, resolved
+
 	default:
-		return "", false
+		return key, true
+	}
+}
+
+// scalarKey is [YL.resolveKey] followed by the scalar test: it returns the key's text and the
+// token whose position the Key token should report, or ok=false when the key is not a scalar.
+//
+// The position is the resolved scalar's own token, so the reported location always holds the
+// text the token carries. For an alias that is the anchor DEFINITION site, consistent with how
+// alias-expanded values are positioned (see walkAlias).
+func (l *YL) scalarKeyResolved(key ast.MapKeyNode) (string, *yamltoken.Token, bool) {
+	node, ok := l.resolveKey(key, 0)
+	if !ok {
+		return "", nil, false
+	}
+
+	return scalarKey(node)
+}
+
+// scalarKey reads a scalar node's text and token. It does no unwrapping: callers that may see a
+// wrapped key go through [YL.scalarKeyResolved].
+func scalarKey(node ast.Node) (string, *yamltoken.Token, bool) {
+	switch k := node.(type) {
+	case *ast.StringNode:
+		return k.Value, k.Token, true
+	case *ast.IntegerNode:
+		return k.Token.Value, k.Token, true
+	case *ast.FloatNode:
+		return k.Token.Value, k.Token, true
+	case *ast.BoolNode:
+		return k.Token.Value, k.Token, true
+	case *ast.NullNode:
+		return k.Token.Value, k.Token, true
+	case *ast.LiteralNode:
+		// a block scalar used as an explicit key ("? |" ...): its text is the folded content
+		return k.Value.Value, k.Start, true
+	default:
+		return "", nil, false
 	}
 }
 
@@ -361,6 +558,7 @@ func (l *YL) walkSequence(n *ast.SequenceNode, lvl int) {
 		return
 	}
 
+	openIdx := len(l.toks)
 	l.emitDelim(token.OpeningSquareBracket, posOf(n.Start), inner)
 	for _, v := range n.Values {
 		if l.err != nil {
@@ -370,6 +568,10 @@ func (l *YL) walkSequence(n *ast.SequenceNode, lvl int) {
 	}
 	// The closing delimiter reports the ENCLOSING level, matching L (see walkMappingEntries).
 	l.emitDelim(token.ClosingSquareBracket, posOf(n.End), lvl)
+
+	if !n.IsFlowStyle {
+		l.patchBlockSpan(openIdx)
+	}
 }
 
 // walkAlias resolves an alias to its anchored value and emits its tokens inline, guarding
@@ -403,23 +605,21 @@ func (l *YL) emitKey(key ast.MapKeyNode, lvl int) {
 		return
 	}
 
-	switch k := key.(type) {
-	case *ast.StringNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Value)), posOf(k.Token), lvl)
-	case *ast.IntegerNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.FloatNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.BoolNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.NullNode:
-		l.putValue(token.MakeWithValue(token.Key, []byte(k.Token.Value)), posOf(k.Token), lvl)
-	case *ast.MergeKeyNode:
-		// D5 (deferred): the "<<" merge key is a later increment.
+	if _, isMerge := key.(*ast.MergeKeyNode); isMerge {
+		// a "<<" reaching here was not resolved away by resolveMapping
 		l.err = codes.ErrInvalidToken
-	default:
-		l.err = ErrComplexKey
+
+		return
 	}
+
+	text, tok, ok := l.scalarKeyResolved(key)
+	if !ok {
+		l.err = ErrComplexKey
+
+		return
+	}
+
+	l.putValue(token.MakeWithValue(token.Key, []byte(text)), posOf(tok), lvl)
 }
 
 // walkInteger emits an integer, unconverted when its spelling is already a JSON number and
@@ -512,12 +712,80 @@ func (l *YL) put(tok token.T, pos *yamltoken.Position, lvl int) {
 	}
 
 	e := emit{tok: tok, lvl: lvl}
-	if pos != nil {
-		e.off = uint64(pos.Offset) //nolint:gosec // no overflow, no negative values
+	switch {
+	case pos != nil:
+		// derived from line/column rather than taken from pos.Offset -- see byteOffset
+		e.off = l.byteOffset(pos.Line, pos.Column)
 		e.line = pos.Line
 		e.col = pos.Column
+		if l.bomBytes > 0 {
+			// the parser saw the input without its byte order mark; put the reported position
+			// back on the caller's coordinates. The mark is 3 bytes and one character, all of
+			// it on line 1, so only that line's columns shift.
+			e.off += uint64(l.bomBytes)
+			if e.line == 1 {
+				e.col++
+			}
+		}
+
+	case len(l.toks) > 0:
+		// No source position: an implicit value the document does not spell out (a "key:" with
+		// nothing after it). It belongs where the construct that implies it left off, so it
+		// inherits the preceding token's position rather than reporting none.
+		prev := l.toks[len(l.toks)-1]
+		e.off, e.line, e.col = prev.off, prev.line, prev.col
+
+	default:
+		// Nothing precedes it either: an empty, comment-only or header-only document, whose
+		// single implicit null value is the whole token stream. The start of the input is the
+		// only position it can honestly claim.
+		e.off, e.line, e.col = 0, 1, 1
 	}
 	l.toks = append(l.toks, e)
+}
+
+// patchBlockSpan gives a BLOCK collection's delimiters real positions, openIdx being the index
+// at which its opening delimiter was appended.
+//
+// Block style has no "{" / "[" / "}" / "]" characters, so goccy has no token to point the
+// delimiters at. It sets the node's Start to the first entry's SEPARATOR — the ":" of the first
+// pair, the "-" of the first item — and its End to nil. Taken literally that is worse than
+// imprecise:
+//
+//   - the opening delimiter lands AFTER the key it precedes ("info:" reports the ":" of the
+//     nested "title:" a line below), so the token stream contradicts its own order and a
+//     consumer laying tokens out by position has to sort them back;
+//   - the closing delimiter gets no position at all and surfaces as line 0, column 0, which is
+//     not a position — lines are 1-based — so a consumer can only discard it.
+//
+// Instead the delimiters take the SPAN of what they enclose: the opening one reports the first
+// token inside the container, the closing one the last. Both are real, in-range positions, and
+// an alias-free document then reads monotonically.
+//
+// They are EQUAL to their neighbour's position rather than strictly before/after it, because in
+// block style there is no character of their own to point at: a consumer must order by
+// non-decreasing position, not strictly increasing. (An alias-BEARING document can still go
+// backwards, by design — expanded tokens report the anchor definition site, see walkAlias.)
+//
+// The span is read back off the emitted stream rather than computed from the AST so that it
+// composes with everything the walk may have done to the children — merge-key resolution, alias
+// expansion, tags, nested containers — none of which the node's own tokens know about.
+//
+// It is a no-op for a flow collection (the caller checks), for an empty one (nothing to span,
+// so goccy's own tokens stand), and when a circuit breaker cut the walk short and the indices
+// no longer line up.
+func (l *YL) patchBlockSpan(openIdx int) {
+	closeIdx := len(l.toks) - 1
+	if l.err != nil || openIdx < 0 || closeIdx <= openIdx || closeIdx >= len(l.toks) {
+		return
+	}
+	if closeIdx == openIdx+1 {
+		return // empty container: no children to take a span from
+	}
+
+	first, last := l.toks[openIdx+1], l.toks[closeIdx-1]
+	l.toks[openIdx].off, l.toks[openIdx].line, l.toks[openIdx].col = first.off, first.line, first.col
+	l.toks[closeIdx].off, l.toks[closeIdx].line, l.toks[closeIdx].col = last.off, last.line, last.col
 }
 
 // overContainerStack reports whether opening a container at depth would exceed the

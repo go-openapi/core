@@ -182,6 +182,14 @@ func FuzzYL(f *testing.F) {
 		"e: &b\n  a: 1\n  <<: *b\n  c: 3\n",
 		"e: &b\n  <<: [*b]\n",
 		"a: &x\n  - *x\n",
+		// a leading UTF-8 BOM is a document prefix, not content. goccy does not strip it, so it
+		// used to become the first character of the first token and change the parse outright:
+		// "<BOM>{}" came back as a SCALAR. Caught by the JSON-subset differential, since L does
+		// consume a leading BOM.
+		"\uFEFF\t0",
+		"\uFEFF{}",
+		"\uFEFF[1]",
+		"\uFEFFa: 1\n",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -227,6 +235,26 @@ func FuzzYL(f *testing.F) {
 		if err1 == nil {
 			if err := fzValidate(toks1); err != nil {
 				t.Fatalf("accepted an ill-formed stream: %v", err)
+			}
+		}
+
+		// Positions stay inside the caller's buffer. Offset is DERIVED from goccy's line/column
+		// (see walk.go:byteOffset) rather than taken from its Position.Offset, so it is arithmetic
+		// of ours over adversarial input -- exactly what a fuzzer should be pointed at. A caller
+		// slicing the source with it must never be handed an out-of-range index.
+		posl := yamllexer.NewWithBytes(data, opts...)
+		n := 0
+		for tok := range posl.Tokens() {
+			if n++; n > budget {
+				break
+			}
+			if off := posl.Offset(); off > uint64(len(data)) {
+				t.Fatalf("offset %d out of range for a %d-byte input (token %v)",
+					off, len(data), tok.Kind())
+			}
+			if posl.Line() < 1 || posl.Column() < 1 {
+				t.Fatalf("non-positive position L%dC%d (token %v)",
+					posl.Line(), posl.Column(), tok.Kind())
 			}
 		}
 
