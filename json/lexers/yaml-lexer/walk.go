@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"bytes"
 	"strings"
 
 	codes "github.com/go-openapi/core/json/lexers/error-codes"
@@ -20,7 +21,7 @@ func (l *YL) build() {
 		return
 	}
 
-	f, err := safeParse(l.data)
+	f, err := safeParse(l.stripBOM())
 	if err != nil {
 		l.err = err
 
@@ -48,6 +49,30 @@ func (l *YL) build() {
 	l.anchors = nil
 	l.expanding = nil
 	l.merging = nil
+}
+
+// bomUTF8 is the UTF-8 encoding of U+FEFF, the byte order mark.
+var bomUTF8 = []byte{0xEF, 0xBB, 0xBF} //nolint:gochecknoglobals // immutable 3-byte constant
+
+// stripBOM returns the input with a leading UTF-8 byte order mark removed, recording its width
+// so reported positions can be put back on the caller's coordinates.
+//
+// YAML 1.2 allows a document to be prefixed by a BOM and it is not part of the content, but
+// goccy does not strip it: it becomes the first character of the first token, which does not
+// merely dirty a value -- it changes the parse. A BOM followed by "{}" comes back as the
+// SCALAR "<BOM>{}" rather than an empty mapping, and a BOM followed by "a: 1" yields the key
+// "<BOM>a". So the mark has to go before the parser sees it, not be trimmed off afterwards.
+//
+// The JSON lexer L consumes a leading BOM the same way (see input.CheckBOM), which is what the
+// FuzzYL JSON-subset differential compares against.
+func (l *YL) stripBOM() []byte {
+	if !bytes.HasPrefix(l.data, bomUTF8) {
+		return l.data
+	}
+
+	l.bomBytes = len(bomUTF8)
+
+	return l.data[len(bomUTF8):]
 }
 
 // safeParse runs the goccy parser, converting a recoverable panic into an error so a
@@ -614,6 +639,15 @@ func (l *YL) put(tok token.T, pos *yamltoken.Position, lvl int) {
 		e.off = uint64(pos.Offset) //nolint:gosec // no overflow, no negative values
 		e.line = pos.Line
 		e.col = pos.Column
+		if l.bomBytes > 0 {
+			// the parser saw the input without its byte order mark; put the reported position
+			// back on the caller's coordinates. The mark is 3 bytes and one character, all of
+			// it on line 1, so only that line's columns shift.
+			e.off += uint64(l.bomBytes)
+			if e.line == 1 {
+				e.col++
+			}
+		}
 
 	case len(l.toks) > 0:
 		// No source position: an implicit value the document does not spell out (a "key:" with

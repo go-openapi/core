@@ -261,3 +261,44 @@ func TestPositionsOverTheWholeSuite(t *testing.T) {
 
 	t.Logf("ordering checked on %d documents, %d skipped for aliases", checked, skipped)
 }
+
+// TestBOMPositions pins that stripping a leading byte order mark does not shift the positions
+// YL reports: the parser sees the input without the mark, so every position it hands back has to
+// be put back on the caller's coordinates (walk.go:stripBOM).
+func TestBOMPositions(t *testing.T) {
+	const bom = "\uFEFF"
+
+	t.Run("offsets stay on the caller's bytes", func(t *testing.T) {
+		withBOM := lexPositions(t, bom+"{a: 1}\n")
+		without := lexPositions(t, "{a: 1}\n")
+		require.Len(t, withBOM, len(without))
+
+		for i := range withBOM {
+			assert.Equalf(t, without[i].off+uint64(len(bom)), withBOM[i].off,
+				"token %d: offset must account for the stripped mark", i)
+		}
+	})
+
+	t.Run("columns shift on line 1 only", func(t *testing.T) {
+		withBOM := lexPositions(t, bom+"a: 1\nb: 2\n")
+		without := lexPositions(t, "a: 1\nb: 2\n")
+		require.Len(t, withBOM, len(without))
+
+		for i := range withBOM {
+			assert.Equalf(t, without[i].line, withBOM[i].line, "token %d: line must not move", i)
+
+			want := without[i].col
+			if without[i].line == 1 {
+				want++ // the mark is one character, and it is on line 1
+			}
+			assert.Equalf(t, want, withBOM[i].col, "token %d: column", i)
+		}
+	})
+
+	t.Run("a mark that is not at the start is content", func(t *testing.T) {
+		// only a LEADING mark is a document prefix; anywhere else U+FEFF is an ordinary character
+		got := lexPositions(t, "a: "+bom+"x\n")
+		require.Len(t, got, 4)
+		assert.Equal(t, bom+"x", got[2].val)
+	})
+}

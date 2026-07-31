@@ -37,6 +37,10 @@ type YL struct {
 	built bool   // whether toks has been built for the current input
 	err   error  // sticky lexer error state
 
+	// bomBytes is 3 when the input opened with a UTF-8 byte order mark, which is stripped
+	// before parsing and added back to reported positions. See walk.go:build.
+	bomBytes int
+
 	// snapshot of the most-recently-returned token, feeding Offset/IndentLevel/Line/Column
 	cur emit
 
@@ -206,6 +210,7 @@ func (l *YL) reset() {
 	l.toks = l.toks[:0]
 	l.pos = 0
 	l.built = false
+	l.bomBytes = 0
 	l.cur = emit{}
 	l.err = nil
 
