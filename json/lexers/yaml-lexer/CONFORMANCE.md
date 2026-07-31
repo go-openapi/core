@@ -160,7 +160,12 @@ stream (`+MAP =VAL :a =VAL :4.2 =VAL :d =VAL :23`) and its canonical `dump` both
 keys `a, d`, but its `json` field writes `d` first. The suite compares loaded data as
 unordered maps, so nothing there ever checked its JSON text against its own tree. We keep
 key order — a JSON token stream is ordered, and so is our model — so we match the event
-stream and diverge from the JSON text. Worth reporting upstream to yaml-test-suite.
+stream and diverge from the JSON text.
+
+Reported as [yaml/yaml-test-suite#179](https://github.com/yaml/yaml-test-suite/issues/179).
+That repository appears largely unmaintained, so this entry is **permanent, not pending** —
+nothing is waiting on it. If the fixture is ever corrected the xfail will report itself as
+an unexpected pass, which is the signal to remove it.
 
 ### 4. Valid documents the parser rejects — 3 cases
 

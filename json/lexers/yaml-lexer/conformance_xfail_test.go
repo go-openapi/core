@@ -60,7 +60,7 @@ func conformanceXFail() map[string]string {
 		// own tree. We keep key order (a JSON token stream is ordered, and so is our model), so we match the
 		// event stream and diverge from the json text. Reported upstream rather than worked around.
 		// ---------------------------------------------------------------------------------------------------
-		"RR7F":   "fixture defect: its json field contradicts its own event stream on key order",
+		"RR7F":   "fixture defect (yaml-test-suite#179): its json contradicts its own event stream",
 		"565N":   "token stream differs from the expected JSON",
 		"L24T/1": "token stream differs from the expected JSON",
 		"LE5A":   "token stream differs from the expected JSON",
