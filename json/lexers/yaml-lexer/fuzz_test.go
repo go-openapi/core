@@ -238,6 +238,26 @@ func FuzzYL(f *testing.F) {
 			}
 		}
 
+		// Positions stay inside the caller's buffer. Offset is DERIVED from goccy's line/column
+		// (see walk.go:byteOffset) rather than taken from its Position.Offset, so it is arithmetic
+		// of ours over adversarial input -- exactly what a fuzzer should be pointed at. A caller
+		// slicing the source with it must never be handed an out-of-range index.
+		posl := yamllexer.NewWithBytes(data, opts...)
+		n := 0
+		for tok := range posl.Tokens() {
+			if n++; n > budget {
+				break
+			}
+			if off := posl.Offset(); off > uint64(len(data)) {
+				t.Fatalf("offset %d out of range for a %d-byte input (token %v)",
+					off, len(data), tok.Kind())
+			}
+			if posl.Line() < 1 || posl.Column() < 1 {
+				t.Fatalf("non-positive position L%dC%d (token %v)",
+					posl.Line(), posl.Column(), tok.Kind())
+			}
+		}
+
 		// JSON-subset differential (only for valid UTF-8, and only when both accept).
 		// On INVALID UTF-8 inside a string the two libraries legitimately differ: the JSON
 		// lexer passes the raw bytes through, while goccy replaces them with U+FFFD. That is

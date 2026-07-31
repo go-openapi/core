@@ -75,8 +75,14 @@ for each is in **[DESIGN.md](DESIGN.md)**; in short:
 - **Positions on expanded content.** `Offset` / `Line` / `Column` for tokens produced by
   expanding an alias or a merge key point at the anchor **definition** site (expansion
   re-walks the original node), not the usage site.
-- **Block-style closers have no position.** goccy records no position for block `}` / `]`
-  (only flow-style closers carry one), so they report `0/0/0`.
+- **Block-style delimiters share a position with their contents.** A block collection has no
+  `{` / `[` characters to point at, so its opening and closing delimiters report the span of
+  what they enclose — the first and last token inside. Order positions by *non-decreasing*,
+  not strictly increasing. Flow-style delimiters report their own real characters.
+- **`Offset` is not the same quantity as `L.Offset`.** `YL.Offset` is the 0-based byte offset
+  at which the token *starts*, so `src[Offset()]` is its first byte. The JSON lexer's `L.Offset`
+  is a consumption cursor that points *past* the token it just returned. Do not assume code
+  moving between the two lexers can keep the same arithmetic.
 - **Invalid UTF-8 in strings.** The JSON lexer `L` rejects unescaped control characters, but
   does *not* validate UTF-8 well-formedness — it passes malformed high bytes (e.g. a lone
   `0xA2`) through raw. goccy instead replaces them with U+FFFD. This is the one place the two

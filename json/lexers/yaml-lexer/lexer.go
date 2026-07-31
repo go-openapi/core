@@ -37,6 +37,12 @@ type YL struct {
 	built bool   // whether toks has been built for the current input
 	err   error  // sticky lexer error state
 
+	// lineStarts holds the byte offset of each source line and lineASCII whether that line is
+	// free of multi-byte runes, together turning a (line, column) pair back into a byte offset.
+	// Build-time transient (nil outside build). See walk.go:byteOffset.
+	lineStarts []int
+	lineASCII  []bool
+
 	// bomBytes is 3 when the input opened with a UTF-8 byte order mark, which is stripped
 	// before parsing and added back to reported positions. See walk.go:build.
 	bomBytes int
@@ -143,14 +149,24 @@ func (l *YL) Tokens() iter.Seq[token.T] {
 	}
 }
 
-// Offset yields the byte offset of the most-recently-returned token in the input.
+// Offset yields the 0-based byte offset at which the most-recently-returned token STARTS, as an
+// index into the bytes the caller supplied: src[Offset()] is the token's first byte, so the source
+// text can be sliced with it directly.
+//
+// Note this is not the same quantity as [lexer.L.Offset], despite the shared name: L reports how
+// many bytes it has consumed so far, a cursor that points PAST the token it just returned. YL walks
+// a parsed document rather than a byte cursor, so it can report the token's own start, which is the
+// more useful of the two. Code moving between the two lexers must not assume they agree.
 //
 // Two YAML-specific caveats apply to all of Offset/Line/Column:
 //   - tokens produced by expanding an alias (*x) or a merge key (<<) report the position of
 //     the anchor DEFINITION, not the alias/merge usage site (expansion re-walks the original
 //     node);
-//   - a block-style closing delimiter (} or ]) reports 0: goccy records no position for it
-//     (only flow-style {…}/[…] closers carry one).
+//   - a block collection has no delimiter characters, so its opening and closing delimiters
+//     report the span of what they enclose — the first and last token inside it — and share
+//     that neighbour's position rather than sitting strictly before/after it. Order by
+//     non-decreasing position, not strictly increasing. Flow-style {…}/[…] delimiters report
+//     their own real characters.
 func (l *YL) Offset() uint64 {
 	return l.cur.off
 }

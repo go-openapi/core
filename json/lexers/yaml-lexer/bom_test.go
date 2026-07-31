@@ -1,6 +1,8 @@
 package lexer_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-openapi/testify/v2/assert"
@@ -115,4 +117,52 @@ func lexKinds(t *testing.T, src string) []string {
 	require.NoErrorf(t, l.Err(), "must lex: %q", src)
 
 	return out
+}
+
+// TestOffsetAddressesTheSource pins that Offset is a 0-based index into the caller's bytes: the
+// token's first byte is src[Offset()]. goccy counts from 1, so the walk converts; the property
+// asserted here is the one consumers rely on (slicing the source), not the conversion.
+//
+// Note this deliberately does NOT match L.Offset, which is a consumption cursor pointing past the
+// token it returned. See the doc on YL.Offset.
+func TestOffsetAddressesTheSource(t *testing.T) {
+	for _, src := range []string{
+		"abc: 1\n",
+		"a:\n  - 10\n  - twenty\n",
+		"{a: 1, bb: 22}\n",
+		"\ufeffabc: 1\n", // with a BOM, offsets stay on the caller's bytes
+		"# lead\nk: v\n", // goccy #856: its own offset is short by one per comment line
+		"# c1\n# c2\nk: v\n",
+		"a: 1 # trailing\nb: 2\n",
+		"a:\n  # inner\n  b: 2\n",
+		"é: 1\nb: 2\n", // multi-byte runes: goccy's offset counts runes, not bytes
+		"k: héllo wörld\nb: 2\n",
+		"ключ: значение\nb: 2\n",
+		"k: \U0001F600\nlonger: 2\n", // outside the BMP: 4 bytes, one column
+		"# ünïcode\nk: v\n",          // both defects at once
+	} {
+		t.Run(strconv.Quote(src), func(t *testing.T) {
+			for _, got := range lexPositions(t, src) {
+				val := got.val
+				if val == "" {
+					continue // delimiters carry no text to find
+				}
+
+				require.LessOrEqual(t, got.off, uint64(len(src)),
+					"offset past end of input for %q", val)
+				assert.Truef(t, strings.HasPrefix(src[got.off:], val) ||
+					strings.HasPrefix(src[got.off:], `"`+val) ||
+					strings.HasPrefix(src[got.off:], "'"+val),
+					"src[%d:] should start with %q, got %q", got.off, val, truncate(src[got.off:]))
+			}
+		})
+	}
+}
+
+func truncate(s string) string {
+	if len(s) > 12 {
+		return s[:12] + "..."
+	}
+
+	return s
 }

@@ -3,6 +3,7 @@ package lexer
 import (
 	"bytes"
 	"strings"
+	"unicode/utf8"
 
 	codes "github.com/go-openapi/core/json/lexers/error-codes"
 	"github.com/go-openapi/core/json/lexers/token"
@@ -21,12 +22,17 @@ func (l *YL) build() {
 		return
 	}
 
-	f, err := safeParse(l.stripBOM())
+	src := l.stripBOM()
+
+	f, err := safeParse(src)
 	if err != nil {
 		l.err = err
 
 		return
 	}
+
+	l.indexLines(src)
+	defer func() { l.lineStarts, l.lineASCII = nil, nil }()
 
 	switch len(f.Docs) {
 	case 0:
@@ -50,6 +56,78 @@ func (l *YL) build() {
 	l.expanding = nil
 	l.merging = nil
 }
+
+// indexLines records where each line of src starts and whether it is pure ASCII, so a
+// (line, column) pair can be turned back into a byte offset. Built once per build and dropped
+// when it ends; the ASCII flag rides along for free, since this pass already reads every byte.
+func (l *YL) indexLines(src []byte) {
+	lines := bytes.Count(src, newline) + 1
+	l.lineStarts = make([]int, 1, lines) // line 1 starts at 0
+	l.lineASCII = make([]bool, 0, lines)
+
+	ascii := true
+	for i, b := range src {
+		switch {
+		case b == '\n':
+			l.lineASCII = append(l.lineASCII, ascii)
+			l.lineStarts = append(l.lineStarts, i+1)
+			ascii = true
+		case b >= utf8.RuneSelf:
+			ascii = false
+		}
+	}
+	l.lineASCII = append(l.lineASCII, ascii) // the last line, which need not be terminated
+}
+
+// byteOffset converts a goccy (line, column) pair into a byte offset into the parsed source.
+//
+// We do NOT use goccy's own Position.Offset, for two independent reasons:
+//
+//   - it is a 1-based RUNE index, not a byte offset (goccy's scanner holds the source as
+//     []rune), so it cannot address the bytes of any document containing non-ASCII text, and
+//     drifts further with every multi-byte character before the token;
+//   - it loses one more per comment line preceding the token (goccy #856).
+//
+// Those two errors have opposite signs, so on an ASCII document with exactly one comment they
+// cancel and pos.Offset looks right. It is not: patching either one alone leaves the other.
+//
+// Line and Column are correct under both defects, so deriving from them is the only thing that
+// can be made correct without a fix upstream. See PROPOSALS-go-openapi.md §1b in the goccy
+// checkout for the reproducers and what we intend to ask for.
+func (l *YL) byteOffset(line, col int) uint64 {
+	if line < 1 || line > len(l.lineStarts) || col < 1 {
+		return 0 // no position we can honestly claim; put() reports the start of the input
+	}
+
+	src := l.data[l.bomBytes:]
+	start := l.lineStarts[line-1]
+	end := len(src)
+	if line < len(l.lineStarts) {
+		end = l.lineStarts[line]
+	}
+
+	// A column counts characters, not bytes, so in general we have to walk the line. On a pure
+	// ASCII line -- nearly all of them, in nearly every document -- the two coincide and we can
+	// index straight to it.
+	i := start + col - 1
+	if !l.lineASCII[line-1] {
+		i = start
+		for range col - 1 {
+			if i >= end {
+				break
+			}
+			i++
+			for i < end && src[i]&0xC0 == 0x80 { // skip the rune's continuation bytes
+				i++
+			}
+		}
+	}
+
+	return uint64(min(i, end)) //nolint:gosec // an index into a []byte is never negative
+}
+
+// newline is the line separator scanned for by indexLines.
+var newline = []byte{'\n'} //nolint:gochecknoglobals // immutable 1-byte constant
 
 // bomUTF8 is the UTF-8 encoding of U+FEFF, the byte order mark.
 var bomUTF8 = []byte{0xEF, 0xBB, 0xBF} //nolint:gochecknoglobals // immutable 3-byte constant
@@ -636,7 +714,8 @@ func (l *YL) put(tok token.T, pos *yamltoken.Position, lvl int) {
 	e := emit{tok: tok, lvl: lvl}
 	switch {
 	case pos != nil:
-		e.off = uint64(pos.Offset) //nolint:gosec // no overflow, no negative values
+		// derived from line/column rather than taken from pos.Offset -- see byteOffset
+		e.off = l.byteOffset(pos.Line, pos.Column)
 		e.line = pos.Line
 		e.col = pos.Column
 		if l.bomBytes > 0 {
