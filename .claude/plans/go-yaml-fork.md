@@ -12,8 +12,14 @@ consumer of goccy.
 
 Fred's, 2026-07-31, in priority order:
 
-- **G1 — simplify `YL`,** our JSON-compatible YAML lexer.
-- **G2 — add YAML streaming,** which does not exist in Go today.
+- **G1 — simplify `YL`,** our JSON-compatible ordered-document lexer. It is the *first*
+  use case, and its requirements are **fast, strict, accurate**.
+- **G2 — stream large documents with a low memory footprint.** The headline goal. No Go
+  YAML library offers it.
+- **G5 — serve the go-openapi ecosystem's YAML needs.** Not a side effect: the ecosystem
+  wants YAML, and `go.yaml.in/yaml/v3` has proved *awkward to use, slow, and without easy
+  low-level access*. Their always-in-progress v4 makes the UX worse and improves none of
+  what we care about, so waiting is not a strategy.
 
 And two that follow from those rather than motivating them:
 
@@ -28,8 +34,15 @@ it rather than replacing it.
 
 **Why fork rather than send PRs.** Upstream is dormant, not hostile: **14 commits in 12
 months**, last 2026-04-07. At that rate a PR queue cannot carry an architectural change.
-There is no quality complaint about goccy — it is the best low-level YAML library in Go,
-which is the whole reason we are here.
+There is no quality complaint about goccy — its low-level API is the reason we are here.
+
+**Why a tracking fork and not a hard fork.** The `testify` → `testify/v2` hard fork was the
+right call there and has paid off over nine months: a complete rewrite, better
+maintainability, near-zero bugs, far more internal testing, a v1→v2 migration tool and real
+documentation. But it was warranted by a bad starting position and an upstream in
+architectural lock-down. **goccy's starting position is better**, so the same medicine is
+not indicated. What carries over from testify is the *operating model*, not the fork depth —
+see §9.
 
 ### What forking does *not* buy
 
@@ -103,6 +116,48 @@ Three properties of the existing code decide the work:
    token slice (line comments, literal/folded, anchor/alias, scalar tags, anchor+tag, map
    keys, key/value, directives, documents) before parsing can begin.
    `parser.parse` itself already loops document-at-a-time.
+
+## 2b. Performance and memory baseline
+
+We are replacing something, so measure against it. Same 0.32 MB OpenAPI-shaped document,
+source → node tree, on this machine:
+
+| | time | throughput | retained |
+|---|---|---|---|
+| goccy → `ast.File` | 47.1 ms | 7.0 MB/s | **31×** source |
+| `go.yaml.in/yaml/v3` → `yaml.Node` | 23.5 ms | 14.1 MB/s | **15×** source |
+| `go.yaml.in/yaml/v3` → `map[string]any` | — | — | 10× source |
+
+**Read honestly: on today's numbers goccy is 2× slower and 2× heavier than the library we
+find unsatisfactory.** That is not a reason to abandon the substrate, but it is a fact the
+plan has to answer rather than skip: "fast, strict, accurate" (G1) is currently not true of
+the base we build on.
+
+Where goccy's 47 ms goes:
+
+| stage | time | share |
+|---|---|---|
+| `[]rune(src)` conversion | 0.5 ms | 1% |
+| scan → tokens (`lexer.Tokenize`) | 14.0 ms | 30% |
+| `CreateGroupedTokens` (9 passes) | 4.5 ms | 10% |
+| AST construction | ~18.5 ms | **39%** |
+
+Three conclusions that shape the work:
+
+1. **The `[]rune` conversion is not a speed problem** (1%). Its costs are the 4× memory and
+   the rune-indexed `Position.Offset`. S1 is justified by memory and correctness, not
+   throughput — do not sell it as a performance fix.
+2. **The dominant cost is AST construction, which a streaming `YL` never pays.** Scanning
+   alone runs at 23.6 MB/s against yaml.v3's 14.1 MB/s for a complete tree, so a streaming
+   projection starts with real headroom — the right comparison is our scanner-plus-projection
+   against their whole pipeline.
+3. **The AST path stays slower until separately optimised.** Anything in the ecosystem (G5)
+   that wants a document tree rather than a token stream keeps paying the 2×. Closing that
+   is its own work item, not a by-product of Phase S.
+
+**Target to hold ourselves to:** streaming `YL` beats yaml.v3's 14.1 MB/s end-to-end while
+holding memory at O(window) instead of 15× the source. Both halves must be measured; a
+streaming implementation that is slower than the thing it replaces has not delivered G2.
 
 ## 3. Phase S — streaming (G2) ⬜
 
@@ -203,8 +258,8 @@ The goal is an xfail list containing nothing that is merely someone else's backl
 3. ⬜ `go.mod` → `module github.com/go-openapi/go-yaml`, `go 1.25.0` (needed for `iter`).
    Mechanical import rewrite. Nothing deleted (F1).
 4. ⬜ CI mirroring this repo's: build/test/`-race`, `golangci-lint`, CodeQL, vuln scan.
-   **Add fuzzing of `parser.ParseBytes`** — upstream has none, and Phase S rewrites the
-   most input-sensitive code in the library.
+   **Add fuzzing of `parser.ParseBytes` and the scanner.** Upstream fuzzes only
+   `Unmarshal` (`FuzzUnmarshalToMap`), one level above the code Phase S rewrites.
 5. ⬜ Keep the dormant packages' tests **running**: free regression cover proving the
    Phase S internals did not change public behaviour.
 6. ⬜ Point `core` at it (4 import sites plus a test helper) via `replace`; drop at first tag.
@@ -236,11 +291,53 @@ patch series, which is the success condition.
   a net gain over depending on an unfuzzed upstream.
 - **Patch-series discipline.** Cherry-pickability survives only if behavioural commits stay
   free of drive-by refactors.
-- **Scope creep into a full YAML library.** F1 keeps decode/encode *dormant* — present, not
-  developed. Consolidating `swag/yamlutils` and the 7 go-openapi repos on
-  `go.yaml.in/yaml/v3` onto this fork is a **separate decision with its own plan**.
+- **G5 is a much bigger commitment than G1/G2**, and the plan should not let it arrive by
+  accident. Serving the ecosystem means a decode/encode surface people can migrate *to*,
+  which is why F1 keeps those packages dormant rather than deleted — they are the seed, not
+  dead weight. But sequencing matters: G1 and G2 first, on their own merits. The ecosystem
+  migration gets its own plan, including whether the 2× AST gap must close first.
+- **The substrate is currently slower than what it replaces.** See §2b. Acceptable for the
+  streaming path, unresolved for the tree path.
 
-## 9. Open questions
+## 9. Operating model — what carries over from `testify/v2`
+
+The fork *depth* does not carry over (§0), but the way that fork was run does. Nine months
+of it produced: a complete rewrite, better maintainability, near-zero bugs, far more
+internal testing, a v1→v2 migration tool, and documentation people actually use. The
+transferable parts, as commitments rather than aspirations:
+
+- ⬜ **Internal testing beyond upstream's.** `scanner/` ships **0 lines of test code**, and
+  the only fuzz target is at the `Unmarshal` level — neither reaches what Phase S rewrites.
+  We add parser- and scanner-level fuzzing *before* Phase S touches anything, and the
+  406-case conformance suite moves into the fork's own CI rather than living only
+  downstream in `core`.
+- ⬜ **Documentation as a deliverable**, not a README afterthought — especially the contracts
+  that are easy to get wrong: what streaming costs when anchors are present, what `Offset`
+  means, what block-collection spans report.
+- ⬜ **A migration tool** if and when G5 is pursued: moving the ecosystem off
+  `go.yaml.in/yaml/v3` means rewriting `yaml.Node` tree walks, which is mechanical enough to
+  automate and miserable enough by hand that nobody will do it otherwise.
+- ⬜ **Stay in touch with upstream.** The testify pattern — implement what *their* users want
+  but their architecture cannot deliver — applies directly: goccy is not in lock-down, it is
+  short of time, so our fixes are worth offering and may well be taken.
+
+### What G5 would actually require
+
+Recorded now so the size is known before it is agreed. The ecosystem's usage of
+`go.yaml.in/yaml/v3`, measured across the go-openapi repos:
+
+```
+yaml.Node 68 · yaml.ScalarNode 28 · yaml.Unmarshal 24 · yaml.Marshal 15
+yaml.MappingNode 11 · yaml.TypedExtensions 9 · yaml.SequenceNode 5 · yaml.DocumentNode 4
+```
+
+The ecosystem is **already reaching for the low-level node API** — which is precisely what
+is awkward about yaml.v3, and precisely what goccy does better with a typed AST. That is
+the strongest argument that this fork can serve G5, and it also sets the migration surface:
+a `yaml.Node`-tree → `ast.Node` translation, plus `Marshal`/`Unmarshal`, plus the 2× AST
+performance gap from §2b.
+
+## 10. Open questions
 
 - ⬜ **Lookahead audit of the nine grouping passes** (blocks S2). Which are bounded? A pass
   needing unbounded lookahead must stay buffering, and would cap what streaming can
