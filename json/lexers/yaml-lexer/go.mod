@@ -1,6 +1,6 @@
 module github.com/go-openapi/core/json/lexers/yaml-lexer
 
-go 1.25.8
+go 1.25.0
 
 require (
 	github.com/go-openapi/core/json v0.0.2

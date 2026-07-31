@@ -1,6 +1,6 @@
 module github.com/go-openapi/core/json/internal/utf8x/_asm
 
-go 1.25.8
+go 1.25.0
 
 require github.com/mmcloughlin/avo v0.6.1-0.20260701065415-16419356370f
 

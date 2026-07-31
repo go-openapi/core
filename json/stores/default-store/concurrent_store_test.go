@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/go-openapi/testify/v2/assert"
-	"go.step.sm/crypto/randutil"
 
 	"github.com/go-openapi/core/json/stores"
 	"github.com/go-openapi/core/json/stores/values"
@@ -135,12 +134,20 @@ func randomStringValue(minSize, maxSize int) values.Value {
 func randomString(minSize, maxSize int) string {
 	size := rand.IntN(maxSize-minSize) + minSize
 
-	s, err := randutil.Alphanumeric(size)
-	if err != nil {
-		panic(err)
+	return randomAlphanumeric(size)
+}
+
+// alphanumericAlphabet is the alphabet drawn from by [randomAlphanumeric].
+const alphanumericAlphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+// randomAlphanumeric builds a random alphanumeric string of the requested size.
+func randomAlphanumeric(size int) string {
+	b := make([]byte, size)
+	for i := range b {
+		b[i] = alphanumericAlphabet[rand.IntN(len(alphanumericAlphabet))]
 	}
 
-	return s
+	return string(b)
 }
 
 func randomNumberValues(n int, magnitude float64) []values.Value {
