@@ -432,7 +432,7 @@ func (l *YL) walkInteger(n *ast.IntegerNode, lvl int) {
 		return
 	}
 
-	base := 10
+	var base int
 	switch n.Token.Type {
 	case yamltoken.HexIntegerType:
 		base = 16
@@ -440,6 +440,8 @@ func (l *YL) walkInteger(n *ast.IntegerNode, lvl int) {
 		base = 8
 	case yamltoken.BinaryIntegerType:
 		base = 2
+	default:
+		base = 10
 	}
 
 	b, ok := convertYAMLInt(raw, base)
@@ -511,7 +513,7 @@ func (l *YL) put(tok token.T, pos *yamltoken.Position, lvl int) {
 
 	e := emit{tok: tok, lvl: lvl}
 	if pos != nil {
-		e.off = uint64(pos.Offset)
+		e.off = uint64(pos.Offset) //nolint:gosec // no overflow, no negative values
 		e.line = pos.Line
 		e.col = pos.Column
 	}

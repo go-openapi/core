@@ -12,8 +12,9 @@ type (
 	}
 )
 
-var defaultOptions = options{}
+var defaultOptions = options{} //nolint:gochecknoglobals // it's okay to keep defaults as a preallocated immutable global
 
+//nolint:staticcheck,unparam // we force defaults options here - the o parameter is only here to avoid any allocation
 func applyWithDefaults(o options, opts []Option) options {
 	o = defaultOptions
 	for _, apply := range opts {
