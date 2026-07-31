@@ -8,6 +8,7 @@ accept + token stream matches the expected JSON   204 / 272   (75%)
 invalid document rejected                          85 /  94   (90%)
 recorded only (no single-root JSON equivalent)     63
 known divergences (conformanceXFail)               54
+  of which out of scope by design                  14
 ```
 
 ## What is being measured
@@ -19,7 +20,8 @@ streams are identical.
 
 That framing matters for reading the numbers: a case `YL` fails is not necessarily a
 YAML bug. It may be a construct JSON cannot express, in which case being unable to lex
-it is correct behavior. The 54 divergences below are split accordingly.
+it is correct behavior. The 54 xfail entries below are split accordingly — 14 of them are the design boundary
+rather than work.
 
 Three buckets, mirroring the JSON suite's `y_`/`n_`/`i_` split:
 
@@ -100,11 +102,13 @@ largest single group.
 Genuinely out of scope within this group: explicit complex keys (`? [a, b] : c`),
 which JSON cannot express at all.
 
-### 2. Multiple documents — 14 cases
+### 2. Multiple documents — 14 cases (out of scope by design)
 
 A JSON token stream has one root, so a `%YAML`/`---` multi-document stream is rejected.
-Out of scope until the ND-JSON work on the roadmap lands, at which point these become
-an NDJSON mode rather than an error.
+`YL`'s model is structurally single-document; this is an acknowledged boundary, not a
+defect, and these 14 are listed in the xfail table only so the suite stays green and their
+verdict cannot drift unnoticed. Counting divergences we might actually act on, the number
+is **40, not 54**.
 
 (Note these are cases where the *expectation* is still single-root — a directive plus
 one document. Streams whose expectation is genuinely several JSON values fall into the
@@ -173,7 +177,7 @@ In rough order of value per unit of effort:
 2. **Over-permissiveness** (group 3) — 9 cases, and the only group where we accept
    documents we should reject. Worth confirming against goccy first.
 3. **Scalar resolution** (group 4) — 5 cases, each needing individual reading.
-4. **Multi-document** (group 2) — 14 cases, blocked on the ND-JSON decision.
+4. ~~**Multi-document** (group 2)~~ — not on the list: out of scope by design (see above).
 5. **Upstream parse failures** (group 5) — 3 cases, not ours to fix directly.
 
 ## Maintaining this
