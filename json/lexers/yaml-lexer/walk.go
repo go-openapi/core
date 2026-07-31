@@ -100,11 +100,13 @@ func (l *YL) walkValue(node ast.Node, lvl int) {
 	case *ast.MappingNode:
 		l.walkMapping(n, lvl)
 	case *ast.MappingValueNode:
-		// a single-entry mapping that goccy did not wrap in a MappingNode
+		// a single-entry mapping that goccy did not wrap in a MappingNode; only block style
+		// produces one, and its token is the pair's ":" (see patchBlockSpan)
 		l.walkMappingEntries(
 			[]*ast.MappingValueNode{n},
 			posOf(n.GetToken()),
 			posOf(n.GetToken()),
+			false,
 			lvl,
 		)
 	case *ast.SequenceNode:
@@ -129,7 +131,7 @@ func (l *YL) walkValue(node ast.Node, lvl int) {
 
 // walkMapping emits an object: { key : value , … }.
 func (l *YL) walkMapping(n *ast.MappingNode, lvl int) {
-	l.walkMappingEntries(n.Values, posOf(n.Start), posOf(n.End), lvl)
+	l.walkMappingEntries(n.Values, posOf(n.Start), posOf(n.End), n.IsFlowStyle, lvl)
 }
 
 // walkMappingEntries emits the object delimiters around a list of key/value entries.
@@ -137,6 +139,7 @@ func (l *YL) walkMapping(n *ast.MappingNode, lvl int) {
 func (l *YL) walkMappingEntries(
 	values []*ast.MappingValueNode,
 	start, end *yamltoken.Position,
+	flow bool,
 	lvl int,
 ) {
 	inner := lvl + 1
@@ -144,6 +147,7 @@ func (l *YL) walkMappingEntries(
 		return
 	}
 
+	openIdx := len(l.toks)
 	l.emitDelim(token.OpeningBracket, start, inner)
 	if hasMergeKey(values) {
 		// D5: resolve "<<" merge keys with RFC precedence (explicit keys win, earlier merges
@@ -167,6 +171,10 @@ func (l *YL) walkMappingEntries(
 	// The closing delimiter reports the ENCLOSING level (the level it returns to), matching
 	// the JSON lexer L, which pops the container before emitting the closer.
 	l.emitDelim(token.ClosingBracket, end, lvl)
+
+	if !flow {
+		l.patchBlockSpan(openIdx)
+	}
 }
 
 // entryKV is a resolved mapping member (after merge-key expansion).
@@ -361,6 +369,7 @@ func (l *YL) walkSequence(n *ast.SequenceNode, lvl int) {
 		return
 	}
 
+	openIdx := len(l.toks)
 	l.emitDelim(token.OpeningSquareBracket, posOf(n.Start), inner)
 	for _, v := range n.Values {
 		if l.err != nil {
@@ -370,6 +379,10 @@ func (l *YL) walkSequence(n *ast.SequenceNode, lvl int) {
 	}
 	// The closing delimiter reports the ENCLOSING level, matching L (see walkMappingEntries).
 	l.emitDelim(token.ClosingSquareBracket, posOf(n.End), lvl)
+
+	if !n.IsFlowStyle {
+		l.patchBlockSpan(openIdx)
+	}
 }
 
 // walkAlias resolves an alias to its anchored value and emits its tokens inline, guarding
@@ -512,12 +525,70 @@ func (l *YL) put(tok token.T, pos *yamltoken.Position, lvl int) {
 	}
 
 	e := emit{tok: tok, lvl: lvl}
-	if pos != nil {
+	switch {
+	case pos != nil:
 		e.off = uint64(pos.Offset) //nolint:gosec // no overflow, no negative values
 		e.line = pos.Line
 		e.col = pos.Column
+
+	case len(l.toks) > 0:
+		// No source position: an implicit value the document does not spell out (a "key:" with
+		// nothing after it). It belongs where the construct that implies it left off, so it
+		// inherits the preceding token's position rather than reporting none.
+		prev := l.toks[len(l.toks)-1]
+		e.off, e.line, e.col = prev.off, prev.line, prev.col
+
+	default:
+		// Nothing precedes it either: an empty, comment-only or header-only document, whose
+		// single implicit null value is the whole token stream. The start of the input is the
+		// only position it can honestly claim.
+		e.off, e.line, e.col = 0, 1, 1
 	}
 	l.toks = append(l.toks, e)
+}
+
+// patchBlockSpan gives a BLOCK collection's delimiters real positions, openIdx being the index
+// at which its opening delimiter was appended.
+//
+// Block style has no "{" / "[" / "}" / "]" characters, so goccy has no token to point the
+// delimiters at. It sets the node's Start to the first entry's SEPARATOR — the ":" of the first
+// pair, the "-" of the first item — and its End to nil. Taken literally that is worse than
+// imprecise:
+//
+//   - the opening delimiter lands AFTER the key it precedes ("info:" reports the ":" of the
+//     nested "title:" a line below), so the token stream contradicts its own order and a
+//     consumer laying tokens out by position has to sort them back;
+//   - the closing delimiter gets no position at all and surfaces as line 0, column 0, which is
+//     not a position — lines are 1-based — so a consumer can only discard it.
+//
+// Instead the delimiters take the SPAN of what they enclose: the opening one reports the first
+// token inside the container, the closing one the last. Both are real, in-range positions, and
+// an alias-free document then reads monotonically.
+//
+// They are EQUAL to their neighbour's position rather than strictly before/after it, because in
+// block style there is no character of their own to point at: a consumer must order by
+// non-decreasing position, not strictly increasing. (An alias-BEARING document can still go
+// backwards, by design — expanded tokens report the anchor definition site, see walkAlias.)
+//
+// The span is read back off the emitted stream rather than computed from the AST so that it
+// composes with everything the walk may have done to the children — merge-key resolution, alias
+// expansion, tags, nested containers — none of which the node's own tokens know about.
+//
+// It is a no-op for a flow collection (the caller checks), for an empty one (nothing to span,
+// so goccy's own tokens stand), and when a circuit breaker cut the walk short and the indices
+// no longer line up.
+func (l *YL) patchBlockSpan(openIdx int) {
+	closeIdx := len(l.toks) - 1
+	if l.err != nil || openIdx < 0 || closeIdx <= openIdx || closeIdx >= len(l.toks) {
+		return
+	}
+	if closeIdx == openIdx+1 {
+		return // empty container: no children to take a span from
+	}
+
+	first, last := l.toks[openIdx+1], l.toks[closeIdx-1]
+	l.toks[openIdx].off, l.toks[openIdx].line, l.toks[openIdx].col = first.off, first.line, first.col
+	l.toks[closeIdx].off, l.toks[closeIdx].line, l.toks[closeIdx].col = last.off, last.line, last.col
 }
 
 // overContainerStack reports whether opening a container at depth would exceed the
