@@ -133,4 +133,3 @@ func storeNonASCII(nonascii reg.GPVirtual) {
 	SETNE(flag)
 	Store(flag, ReturnIndex(1))
 }
-
