@@ -43,9 +43,11 @@ func (l *YL) build() {
 
 	l.anchors = map[string]ast.Node{}
 	l.expanding = map[string]bool{}
+	l.merging = map[ast.Node]bool{}
 	l.walkValue(f.Docs[0].Body, 0)
 	l.anchors = nil
 	l.expanding = nil
+	l.merging = nil
 }
 
 // safeParse runs the goccy parser, converting a recoverable panic into an error so a
@@ -209,7 +211,23 @@ func (l *YL) resolveMapping(values []*ast.MappingValueNode) []entryKV {
 				return
 			}
 			if _, isMerge := mv.Key.(*ast.MergeKeyNode); isMerge {
+				// The cycle guard has to span the EXPANSION of the merged entries, not just the
+				// resolution of the alias to a node list: a mapping whose own merge key aliases
+				// itself (`e: &b\n  <<: *b`) resolves to its own entries, which contain that same
+				// merge key, so add() would recurse forever. mergeEntries' anchor guard is already
+				// released by then — it only covers the lookup, which does not recurse.
+				//
+				// Keying on the merge source node rather than the anchor name also catches cycles
+				// formed through a chain of aliases or a merge sequence, and lets the same anchor be
+				// merged twice in sibling positions, which is redundant but legal.
+				if l.merging[mv.Value] {
+					l.err = ErrAliasCycle
+
+					return
+				}
+				l.merging[mv.Value] = true
 				add(l.mergeEntries(mv.Value), true)
+				delete(l.merging, mv.Value)
 
 				continue
 			}

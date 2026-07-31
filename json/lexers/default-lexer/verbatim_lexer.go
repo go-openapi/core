@@ -16,6 +16,40 @@ var _ lexers.Lexer = &VL{}
 // Whenever consuming from an io.Reader, the stream is buffered so it is not useful to use a buffered reader.
 //
 // The lexer performs JSON grammar check such as opening/closing brackets, expected sequence of delimiter/values etc.
+//
+// # The verbatim pledge
+//
+// VL reproduces its input byte-for-byte: the token stream plus [VL.LeadingSpace] reassembles the source exactly, and
+// every token value is a slice of the source with its escapes intact. Under the default [UTF8Strict] policy this is
+// unconditional, because input that is not valid UTF-8 is rejected rather than emitted.
+//
+// Two documented exceptions:
+//
+//   - A leading UTF-8 BOM is consumed before any token exists, so it belongs to no token's leading space and is not
+//     re-emitted. RFC 8259 §8.1 asks implementations not to emit a BOM, so this is the conformant direction.
+//   - Under [UTF8Replace], an ill-formed byte sequence inside a string value is rewritten (see "Mangling" below).
+//
+// # Mangling under UTF8Replace, and what it costs
+//
+// [UTF8Replace] substitutes U+FFFD for each ill-formed byte in a string value. Only the offending value is affected —
+// every other token still aliases the source — but for that value the byte-for-byte pledge is off, and so is the
+// ability to map value bytes back onto source bytes:
+//
+//   - U+FFFD encodes as THREE bytes and replaces ONE. A value carrying k ill-formed bytes is 2k bytes longer than its
+//     source span, so len(token.Value()) no longer equals the width of the text it came from. Multi-byte faults
+//     compound this: a truncated three-byte sequence is three separate ill-formed bytes, hence three replacements and
+//     nine bytes where the source had three.
+//   - Consequently an index INTO a mangled value cannot be turned into a source offset by adding it to the token's
+//     start, and the source text of such a value cannot be recovered from the token. If you need the original bytes,
+//     use [UTF8Strict] (and handle the error) or [UTF8Passthrough] (and validate downstream yourself).
+//
+// What does NOT change: [VL.Line], [VL.Column], [L.Offset] and [VL.LeadingSpace] stay exact under every policy. They
+// are derived from the scan cursor walking the source, never from the value, so token POSITIONS remain trustworthy
+// even when a token's CONTENT has been rewritten. A linter or formatter can still point at the right place; it just
+// cannot assume the value it holds is the text that was there.
+//
+// Escape text is never rewritten: VL keeps `\uXXXX` as source text, so a broken surrogate pair stays verbatim in the
+// value and its U+FFFD appears only when the value is decoded with [token.Unescape].
 type VL struct {
 	*L
 }

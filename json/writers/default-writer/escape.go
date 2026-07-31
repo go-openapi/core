@@ -4,7 +4,14 @@ import (
 	"unicode/utf8"
 )
 
-func escapedBytes(input, output []byte) ([]byte, []byte) {
+// escapedBytes escapes input into output per the JSON string rules, returning the escaped bytes and any trailing
+// bytes that form an incomplete UTF-8 sequence (which the caller stitches with the next read, or reports).
+//
+// policy decides what happens to a byte that is not part of a well-formed sequence: [UTF8Passthrough] copies it
+// verbatim, anything else substitutes U+FFFD — one per invalid byte, the same granularity as utf8x.Sanitize, so the
+// lexer and the writer agree on what a sanitized value looks like. Under [UTF8Strict] the caller has already
+// rejected such input, so the substitution is unreachable there.
+func escapedBytes(input, output []byte, policy UTF8Policy) ([]byte, []byte) {
 	var (
 		p       int
 		escaped bool
@@ -70,6 +77,14 @@ func escapedBytes(input, output []byte) ([]byte, []byte) {
 				return output, input[i:]
 			}
 			r, runeWidth := utf8.DecodeRune(input[i:])
+			if r == utf8.RuneError && runeWidth == 1 && policy == UTF8Passthrough {
+				output = append(
+					output,
+					c,
+				) // ill-formed, but the caller asked for its bytes untouched
+
+				continue
+			}
 			output = utf8.AppendRune(output, r) // invalid runes are represented as \uFFFD
 			i += runeWidth - 1
 		}

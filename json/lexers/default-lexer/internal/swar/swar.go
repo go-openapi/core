@@ -32,6 +32,20 @@ const (
 // lowest set bit belongs to the lowest-address lane.
 func FirstByte(mask uint64) int { return bits.TrailingZeros64(mask) >> 3 }
 
+// HighBits is the high bit of every lane: a word OR-accumulated over a byte run is non-ASCII iff (acc & HighBits) != 0.
+//
+// This is what makes UTF-8 detection free in the string scanners: every word the stop-scan loads is OR-ed into an
+// accumulator, so a value proven to be pure ASCII — the overwhelmingly common case — is proven valid UTF-8 with no
+// second pass over its bytes.
+const HighBits = high
+
+// LanesBelow returns w with every lane from index k upward cleared, for k in 0..8.
+//
+// It is used to trim the word in which a scan stopped: only the lanes BEFORE the stop belong to the value, so only
+// they may contribute to a non-ASCII verdict. Go defines an over-wide shift as zero, so k == 0 (stop in the first
+// lane, nothing precedes it) correctly yields 0 with no branch.
+func LanesBelow(w uint64, k int) uint64 { return w & (^uint64(0) >> (64 - 8*k)) }
+
 // Broadcast replicates b into all eight lanes of a word.
 func Broadcast(b byte) uint64 { return lo * uint64(b) }
 

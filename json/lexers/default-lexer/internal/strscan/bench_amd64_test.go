@@ -25,13 +25,15 @@ func BenchmarkStringStop(b *testing.B) {
 		b.Run(fmt.Sprintf("len=%04d/SWAR", n), func(b *testing.B) {
 			b.SetBytes(int64(n))
 			for b.Loop() {
-				sink += scanStopSWAR(data)
+				idx, _ := scanStopSWAR(data)
+				sink += idx
 			}
 		})
 		b.Run(fmt.Sprintf("len=%04d/AVX2", n), func(b *testing.B) {
 			b.SetBytes(int64(n))
 			for b.Loop() {
-				sink += stringStopIndexAVX2(data)
+				idx, _ := stringStopIndexAVX2(data)
+				sink += idx
 			}
 		})
 	}

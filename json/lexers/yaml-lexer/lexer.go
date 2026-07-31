@@ -45,10 +45,12 @@ type YL struct {
 	ptr       expressions.Pointer
 	ptrFrames []ptrFrame
 
-	// build-time transient state (nil outside build): anchor table and the set of anchors
-	// currently being expanded (alias cycle guard). See walk.go.
+	// build-time transient state (nil outside build): anchor table and the two alias-cycle
+	// guards — the set of anchors currently being expanded, and the set of "<<" merge sources
+	// whose entries are currently being flattened. See walk.go.
 	anchors   map[string]ast.Node
 	expanding map[string]bool
+	merging   map[ast.Node]bool
 }
 
 // emit is one entry in the materialised token stream: the token plus the source position

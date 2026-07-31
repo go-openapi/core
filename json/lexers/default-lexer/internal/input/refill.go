@@ -37,6 +37,7 @@ func (in *Input) FirstFill() {
 			} else {
 				in.Err = err
 			}
+			in.CheckBOM()
 
 			return
 		}
@@ -45,6 +46,7 @@ func (in *Input) FirstFill() {
 		}
 	}
 	in.Bufferized = n
+	in.CheckBOM()
 }
 
 // ReadMore provides more input from the internal buffer or consumes from the input stream.
@@ -97,6 +99,41 @@ func (in *Input) ConsumeNull(_ byte) token.T {
 	}
 
 	return token.NullToken
+}
+
+// ensureWindow makes at least n unconsumed bytes contiguously available in the window, compacting the consumed prefix
+// away and reading more from the source. It reports whether that many could be made available.
+//
+// It exists for the surrogate-escape lookahead, which must inspect the following `\uXXXX` BEFORE deciding whether it
+// belongs to the current escape (see [Input.peekLowSurrogate]) — consumeN cannot serve that, since it consumes what it
+// reads and a straddling read cannot be given back.
+//
+// Compaction is safe on that path: the only scanners that reach it hold no live buffer index (the streaming string
+// paths accumulate into CurrentValue), and in whole-buffer mode it never compacts at all — it just answers whether the
+// bytes are there. Being a cold path (surrogate escapes only), it deliberately does not maintain PreviousBuffer.
+func (in *Input) ensureWindow(n int) bool {
+	if in.Bufferized-in.Consumed >= n {
+		return true
+	}
+
+	if in.WholeBuffer {
+		return false // the whole input is already here: what is missing does not exist
+	}
+
+	if in.Consumed > 0 {
+		in.Bufferized = copy(in.Buffer, in.Buffer[in.Consumed:in.Bufferized])
+		in.Consumed = 0
+	}
+
+	for in.Bufferized < n {
+		m, err := in.R.Read(in.Buffer[in.Bufferized:])
+		in.Bufferized += m
+		if err != nil || m == 0 {
+			break
+		}
+	}
+
+	return in.Bufferized >= n
 }
 
 // consumeN consumes a small buffer of n bytes to decide tokens such as "true", "false" or "null".

@@ -173,6 +173,14 @@ func FuzzYL(f *testing.F) {
 		"123: ok", "? [a, b]\n: c",
 		"[", "{", "a: [", ": :", "\x00", "\xff\xfe", "\xef\xbb\xbfa: 1", "a:\t1",
 		"a: !!str 7\nb: !!bool yes",
+		// merge-key cycles: a mapping whose own "<<" aliases itself used to recurse forever in
+		// resolveMapping and kill the process with a fatal stack overflow (CI: "fuzzing process
+		// hung or terminated unexpectedly").
+		"e: &b\n  <<: *b\n",
+		"e: &b\n  <<: *b\n  c ",
+		"e: &b\n  a: 1\n  <<: *b\n  c: 3\n",
+		"e: &b\n  <<: [*b]\n",
+		"a: &x\n  - *x\n",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))

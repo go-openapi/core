@@ -1,5 +1,7 @@
 package lexer
 
+import "github.com/go-openapi/core/json/lexers/default-lexer/internal/input"
+
 type (
 	// Option for the lexer.
 	Option func(options) options
@@ -11,9 +13,66 @@ type (
 		keepPreviousBuffer int
 		elideSeparator     bool
 		noAVX2             bool
+		utf8Policy         UTF8Policy
 		jsonPointer        bool
 	}
 )
+
+// UTF8Policy selects what the lexer does with a string that is not valid UTF-8 — an ill-formed byte sequence in the
+// source, or a \u escape that does not denote a Unicode scalar value.
+//
+// RFC 8259 §8.1 requires JSON text to be UTF-8, so the default ([UTF8Strict]) rejects such input. See
+// [WithUTF8Policy].
+type UTF8Policy = input.UTF8Policy
+
+const (
+	// UTF8Strict rejects the document: [L.Err] reports [codes.ErrInvalidUTF8] for ill-formed bytes, or
+	// [codes.ErrSurrogateEscape] for a broken \u surrogate pair.
+	//
+	// This is the default for both [L] and [VL], and it never copies: validation only reads the value the scan already
+	// produced, so the zero-copy aliasing of string values is unaffected.
+	UTF8Strict = input.UTF8Strict
+
+	// UTF8Replace accepts the document and substitutes U+FFFD (the replacement character) — one per invalid byte, one
+	// per broken escape — so every emitted value is valid UTF-8.
+	//
+	// Only an offending value is rewritten (and therefore copied out of the input); valid values are still aliased with
+	// zero copy.
+	//
+	// A mangled value no longer maps onto its source text: U+FFFD is three bytes replacing one, so its length differs
+	// from the source span and an index into it cannot be turned into a source offset. Token POSITIONS are unaffected
+	// — [L.Offset], [VL.Line], [VL.Column] and [VL.LeadingSpace] come from the scan cursor, never from the value. See
+	// the [VL] documentation for the full contract.
+	UTF8Replace = input.UTF8Replace
+
+	// UTF8Passthrough disables raw-byte validation: ill-formed sequences are passed to the caller untouched, exactly as
+	// the lexer behaved before UTF-8 validation existed.
+	//
+	// A \u escape still yields U+FFFD when it does not denote a scalar value, because an escape must always decode to
+	// some rune — there is nothing to "pass through" for an escape, the escape text is not the value.
+	//
+	// UNSAFE: use it only for input already known to be valid UTF-8 (or when a downstream stage validates). Invalid
+	// bytes will reach your []byte and silently become U+FFFD the moment the value is iterated as a string.
+	UTF8Passthrough = input.UTF8Passthrough
+)
+
+// WithUTF8Policy selects how string values that are not valid UTF-8 are handled: rejected ([UTF8Strict], the default),
+// sanitized to U+FFFD ([UTF8Replace]), or waved through unchecked ([UTF8Passthrough]).
+//
+// It applies to both the semantic lexer [L] and the verbatim lexer [VL], and it covers both ways a value can carry a
+// non-character: ill-formed UTF-8 in the source bytes, and a \u escape that does not denote a Unicode scalar value
+// (an unpaired or inverted surrogate).
+//
+// The strategy used to enforce the policy is not a knob: detection of non-ASCII bytes is fused into the string scan
+// the lexer already performs, so an all-ASCII value — the overwhelmingly common case — is proven valid with no second
+// pass. Only values that actually carry a byte >= 0x80 are validated.
+func WithUTF8Policy(policy UTF8Policy) Option {
+	return func(o options) options {
+		o.utf8Policy = policy
+
+		return o
+	}
+}
 
 const defaultBufferBytes = 4096
 

@@ -226,6 +226,7 @@ func (l *L) reset() {
 	l.in.MaxValueBytes = l.maxValueBytes
 	l.in.KeepPreviousBuffer = l.keepPreviousBuffer
 	l.in.NoAVX2 = l.noAVX2
+	l.in.UTF8Policy = l.utf8Policy
 	l.current = token.None
 	l.in.Offset = 0
 	l.in.Consumed = 0
@@ -238,6 +239,12 @@ func (l *L) reset() {
 	l.tokLine = 0
 	l.tokCol = 0
 	l.in.CurrentValue = l.in.CurrentValue[:0] // TODO: possibly preallocate value buffer to some configurable size
+
+	if l.in.WholeBuffer {
+		// a bound buffer can be inspected right away; a streaming lexer is checked after its first fill instead (see
+		// input.FirstFill), which is also where a stream promoted to whole-buffer mode is handled.
+		l.in.CheckBOM()
+	}
 
 	if l.nestingLevel != nil {
 		l.nestingLevel = l.nestingLevel[:1]

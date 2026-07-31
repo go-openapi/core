@@ -25,6 +25,25 @@ func WithBufferSize(size int) BufferedOption {
 	}
 }
 
+// WithUTF8Policy selects what the writer does with caller-supplied data that is not valid UTF-8: refuse it
+// ([UTF8Strict], the default), substitute U+FFFD ([UTF8Replace]), or write it through unchecked
+// ([UTF8Passthrough]).
+//
+// It applies to every entry point that takes bytes, a string, runes or an [io.Reader] from the caller. Values that
+// come from a lexer token ([commonWriter.Token], [commonWriter.VerbatimToken], [commonWriter.VerbatimValue]) are NOT
+// re-checked — the lexers already guarantee valid UTF-8 unless they were themselves relaxed. See the package
+// documentation for that loophole.
+//
+// [Indented] and [YAML] take this through WithIndentBufferedOptions / WithYAMLBufferedOptions;
+// [Unbuffered] has its own [WithUnbufferedUTF8Policy].
+func WithUTF8Policy(policy UTF8Policy) BufferedOption {
+	return func(o bufferedOptions) bufferedOptions {
+		o.utf8Policy = policy
+
+		return o
+	}
+}
+
 // bufferedOptions carries the (immutable, unexported) [Buffered] configuration.
 //
 // It holds configuration only. Runtime state such as the working-buffer redeem handle lives on
@@ -32,6 +51,7 @@ func WithBufferSize(size int) BufferedOption {
 // no finalizer for the options themselves).
 type bufferedOptions struct {
 	bufferSize int
+	utf8Policy UTF8Policy
 }
 
 func bufferedOptionsWithDefaults(opts []BufferedOption) bufferedOptions {

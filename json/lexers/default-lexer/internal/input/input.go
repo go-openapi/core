@@ -1,6 +1,10 @@
 package input
 
-import "io"
+import (
+	"io"
+
+	"github.com/go-openapi/core/json/internal/utf8x"
+)
 
 // Input holds the lexer's buffered-input and scan-cursor state: the buffer window and read position, the
 // value-accumulation scratch, the reader and refill buffers, the error state, and the two grammar flags the string
@@ -41,4 +45,25 @@ type Input struct {
 	NoAVX2             bool
 	MaxValueBytes      int
 	KeepPreviousBuffer int
+
+	// UTF8Policy governs what happens to a string value that is not valid UTF-8. Mirrored from the like-named option in
+	// L.reset(); the lexer package aliases this type so it is the single definition.
+	UTF8Policy UTF8Policy
+
+	// sanitized holds the U+FFFD-substituted rewrite of an ill-formed value under UTF8Replace.
+	//
+	// It is a buffer of its own rather than CurrentValue because on the unescaping paths the value to rewrite IS
+	// CurrentValue. It is allocated lazily on the first ill-formed value, so a well-formed document never pays for it.
+	sanitized []byte
 }
+
+// UTF8Policy is [utf8x.Policy]: the lexers and the writers share one definition so they cannot drift apart. The
+// lexer package aliases this in turn, so callers name neither internal package.
+type UTF8Policy = utf8x.Policy
+
+// The policy values, re-exported so the scanners read UTF8Strict rather than utf8x.PolicyStrict.
+const (
+	UTF8Strict      = utf8x.PolicyStrict
+	UTF8Replace     = utf8x.PolicyReplace
+	UTF8Passthrough = utf8x.PolicyPassthrough
+)

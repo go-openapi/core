@@ -1,0 +1,13 @@
+# Conformance fixtures and golden files are DATA, not source: their exact bytes ARE the test.
+#
+# Without this, a checkout with core.autocrlf=true (the Windows default) rewrites every LF to
+# CRLF and silently changes what is being tested — a YAML fixture that hinges on a trailing
+# space or a tab becomes a different document, a JSON fixture that must be rejected may start
+# being accepted, and every golden file mismatches. A harness may normalise line endings
+# defensively as well, but the fixtures should never have been translated in the first place.
+testdata/** -text
+**/testdata/** -text
+*.golden -text
+
+# Generated assembly is checked in and must match what `go generate` produces byte for byte.
+*.s -text

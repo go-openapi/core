@@ -2,61 +2,81 @@
 
 #include "textflag.h"
 
-// func stringStopIndexAVX2(data []byte) int
+// func stringStopIndexAVX2(data []byte) (int, bool)
 // Requires: AVX, AVX2, BMI
-TEXT ·stringStopIndexAVX2(SB), NOSPLIT, $0-32
+TEXT ·stringStopIndexAVX2(SB), NOSPLIT, $0-33
 	MOVQ         data_base+0(FP), AX
 	MOVQ         data_len+8(FP), CX
+	XORL         DX, DX
 	VPBROADCASTB c1f<>+0(SB), Y0
 	VPBROADCASTB c22<>+0(SB), Y1
 	VPBROADCASTB c5c<>+0(SB), Y2
-	XORQ         DX, DX
+	XORQ         BX, BX
 
 loop32:
-	LEAQ      32(DX), BX
-	CMPQ      BX, CX
+	LEAQ      32(BX), SI
+	CMPQ      SI, CX
 	JG        tail
-	VMOVDQU   (AX)(DX*1), Y3
+	VMOVDQU   (AX)(BX*1), Y3
 	VPMINUB   Y3, Y0, Y4
 	VPCMPEQB  Y4, Y3, Y4
 	VPCMPEQB  Y3, Y1, Y5
-	VPCMPEQB  Y3, Y2, Y3
+	VPCMPEQB  Y3, Y2, Y6
 	VPOR      Y4, Y5, Y4
-	VPOR      Y4, Y3, Y4
-	VPMOVMSKB Y4, BX
-	TESTL     BX, BX
+	VPOR      Y4, Y6, Y4
+	VPMOVMSKB Y3, SI
+	VPMOVMSKB Y4, DI
+	TESTL     DI, DI
 	JNZ       found
-	ADDQ      $0x20, DX
+	ORL       SI, DX
+	ADDQ      $0x20, BX
 	JMP       loop32
 
 found:
-	TZCNTL BX, AX
-	ADDQ   AX, DX
-	MOVQ   DX, ret+24(FP)
+	TZCNTL DI, AX
+	MOVL   DI, CX
+	DECL   CX
+	NOTL   DI
+	ANDL   DI, CX
+	ANDL   CX, SI
+	ORL    SI, DX
+	ADDQ   AX, BX
+	MOVQ   BX, ret+24(FP)
+	TESTL  DX, DX
+	SETNE  AL
+	MOVB   AL, ret1+32(FP)
 	VZEROUPPER
 	RET
 
 tail:
 tailloop:
-	CMPQ    DX, CX
+	CMPQ    BX, CX
 	JGE     notfound
-	MOVBLZX (AX)(DX*1), BX
-	CMPL    BX, $0x20
+	MOVBLZX (AX)(BX*1), SI
+	CMPL    SI, $0x20
 	JL      foundtail
-	CMPL    BX, $0x22
+	CMPL    SI, $0x22
 	JE      foundtail
-	CMPL    BX, $0x5c
+	CMPL    SI, $0x5c
 	JE      foundtail
-	INCQ    DX
+	ANDL    $0x80, SI
+	ORL     SI, DX
+	INCQ    BX
 	JMP     tailloop
 
 foundtail:
-	MOVQ DX, ret+24(FP)
+	MOVQ  BX, ret+24(FP)
+	TESTL DX, DX
+	SETNE AL
+	MOVB  AL, ret1+32(FP)
 	VZEROUPPER
 	RET
 
 notfound:
-	MOVQ CX, ret+24(FP)
+	MOVQ  CX, ret+24(FP)
+	TESTL DX, DX
+	SETNE AL
+	MOVB  AL, ret1+32(FP)
 	VZEROUPPER
 	RET
 
