@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"go.step.sm/crypto/randutil"
-
 	"github.com/go-openapi/core/json/stores"
 	"github.com/go-openapi/core/json/stores/values"
 )
@@ -142,7 +140,7 @@ func stressSamples(n int) []stressSample {
 			v = values.MakeStringValue(stressRepeat(rand.IntN(200) + 130))
 		case 2:
 			// medium string, stored verbatim in the arena (9..128)
-			v = values.MakeStringValue(stressRandom(rand.IntN(100) + 20))
+			v = values.MakeStringValue(randomAlphanumeric(rand.IntN(100) + 20))
 		default:
 			// small / inlined values
 			v = values.MakeUintegerValue(rand.Uint64N(1 << 40))
@@ -157,14 +155,6 @@ func stressString(v values.Value) string {
 		return s
 	}
 	return string(v.Bytes())
-}
-
-func stressRandom(size int) string {
-	s, err := randutil.Alphanumeric(size)
-	if err != nil {
-		panic(err)
-	}
-	return s
 }
 
 func stressRepeat(size int) string {
