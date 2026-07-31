@@ -80,12 +80,19 @@ func convertYAMLInt(raw string, base int) ([]byte, bool) {
 		s = s[1:]
 	}
 
+	const (
+		baseDecimal = 10
+		baseHexa    = 16
+		baseOctal   = 8
+		baseBinary  = 2
+	)
+
 	switch base {
-	case 16:
+	case baseHexa:
 		s = trimBasePrefix(s, 'x')
-	case 8:
+	case baseOctal:
 		s = trimBasePrefix(s, 'o')
-	case 2:
+	case baseBinary:
 		s = trimBasePrefix(s, 'b')
 	}
 
@@ -101,7 +108,7 @@ func convertYAMLInt(raw string, base int) ([]byte, bool) {
 		z.Neg(&z)
 	}
 
-	return z.Append(nil, 10), true
+	return z.Append(nil, baseDecimal), true
 }
 
 // convertYAMLFloat normalises a YAML float spelling into a canonical JSON number, purely

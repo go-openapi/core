@@ -1,0 +1,63 @@
+2G84/3	accept	Literal modifers
+2JQS	reject	Block Mapping with Missing Keys
+35KP	reject	Tags for Root Objects
+4ABK	accept	Flow Mapping Separate Values
+4FJ6	reject	Nested implicit complex keys
+4MUZ/1	accept	Flow mapping colon on line after key
+5TYM	reject	Spec Example 6.21. Local Tag Prefix
+6BFJ	reject	Mapping, key and flow sequence item anchors
+6M2F	reject	Aliases in Explicit Block Mapping
+6PBE	reject	Zero-indented sequences in explicit mapping keys
+6WLZ	reject	Spec Example 6.18. Primary Tag Handle [1.3]
+6XDY	accept	Two document start markers
+6ZKB	reject	Spec Example 9.6. Stream
+7Z25	reject	Bare document after document end marker
+8G76	accept	Spec Example 6.10. Comment Lines
+96NN/1	accept	Leading tab content in literals
+98YD	accept	Spec Example 5.5. Comment Indicator
+9DXL	reject	Spec Example 9.6. Stream [1.3]
+9KAX	reject	Various combinations of tags and anchors
+9MMW	reject	Single Pair Implicit Entries
+9WXW	reject	Spec Example 6.18. Primary Tag Handle
+AVM7	accept	Empty Stream
+CFD4	reject	Empty implicit key in single pair flow sequences
+DFF7	reject	Spec Example 7.16. Flow Mapping Entries
+FH7J	reject	Tags on Empty Scalars
+FRK4	reject	Spec Example 7.3. Completely Empty Flow Nodes
+HWV9	accept	Document-end marker
+JEF9/2	accept	Trailing whitespace in streams
+JHB9	reject	Spec Example 2.7. Two Documents in a Stream
+KK5P	reject	Various combinations of explicit block mappings
+KSS4	reject	Scalars on --- line
+L383	reject	Two scalar docs with trailing comments
+LX3P	reject	Implicit Flow Mapping Key on one line
+M2N8	reject	Question mark edge cases
+M2N8/1	reject	Question mark edge cases
+M5DY	reject	Spec Example 2.11. Mapping between Sequences
+M7A3	reject	Spec Example 9.3. Bare Documents
+MUS6/3	reject	Directive variants
+MUS6/4	reject	Directive variants
+MUS6/5	reject	Directive variants
+MUS6/6	reject	Directive variants
+NHX8	reject	Empty Lines at End of Document
+NKF9	reject	Empty keys in block and flow mapping
+PUW8	reject	Document start on last line
+PW8X	reject	Anchors on Empty Scalars
+Q9WF	reject	Spec Example 6.12. Separation Spaces
+QT73	accept	Comment and document-end marker
+RZP5	reject	Various Trailing Comments [1.3]
+RZT7	reject	Spec Example 2.28. Log File
+S3PD	reject	Spec Example 8.18. Implicit Block Mapping Entries
+SBG9	reject	Flow Sequence in Flow Mapping
+SM9W/1	reject	Single character streams
+U9NS	reject	Spec Example 2.8. Play by Play Feed from a Game
+UKK6	reject	Syntax character edge cases
+UKK6/2	accept	Syntax character edge cases
+UT92	reject	Spec Example 9.4. Explicit Documents
+V9D5	reject	Spec Example 8.19. Compact Block Mappings
+W4TN	reject	Spec Example 9.5. Directives Documents
+X38W	reject	Aliases in Flow Objects
+XW4D	reject	Various Trailing Comments
+ZYU8/1	reject	Directive variants
+ZYU8/2	reject	Directive variants
+ZYU8/3	reject	Directive variants

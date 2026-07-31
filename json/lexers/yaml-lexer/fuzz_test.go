@@ -23,6 +23,7 @@ package lexer_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"iter"
 	"testing"
@@ -88,7 +89,7 @@ func fzValidate(toks []fzTok) error {
 	consumeValue := func() error {
 		if len(st) == 0 {
 			if rootDone {
-				return fmt.Errorf("second root value")
+				return errors.New("second root value")
 			}
 			rootDone = true
 
@@ -97,7 +98,7 @@ func fzValidate(toks []fzTok) error {
 		top := &st[len(st)-1]
 		if top.obj {
 			if top.expectKey {
-				return fmt.Errorf("value where object key expected")
+				return errors.New("value where object key expected")
 			}
 			top.expectKey = true
 		}

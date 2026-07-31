@@ -149,6 +149,7 @@ func TestJSONPointerClone(t *testing.T) {
 
 	// drain the rest; the clone must be unaffected
 	for range l.Tokens() {
+		continue
 	}
 	assert.Equal(t, "/a/b", savedClone.String())
 }

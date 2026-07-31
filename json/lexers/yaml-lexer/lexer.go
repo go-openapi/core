@@ -90,16 +90,6 @@ func NewWithBytes(data []byte, opts ...Option) *YL {
 	return l
 }
 
-// setReader drains r into l.data. A read error is stored as the lexer error state and
-// surfaced on the first token.
-func (l *YL) setReader(r io.Reader) {
-	data, err := io.ReadAll(r)
-	l.data = data
-	if err != nil {
-		l.err = err
-	}
-}
-
 // NextToken returns the next token from the YAML input, or [token.EOFToken] once the stream
 // is exhausted. As with the JSON lexer, errors are not returned: they are kept in the
 // lexer's state (check Ok/Err).
@@ -199,6 +189,16 @@ func (l *YL) ResetWithBytes(data []byte) {
 func (l *YL) ResetWithReader(r io.Reader) {
 	l.reset()
 	l.setReader(r)
+}
+
+// setReader drains r into l.data. A read error is stored as the lexer error state and
+// surfaced on the first token.
+func (l *YL) setReader(r io.Reader) {
+	data, err := io.ReadAll(r)
+	l.data = data
+	if err != nil {
+		l.err = err
+	}
 }
 
 // reset clears the per-input scanning state, preserving allocated capacity for reuse.
