@@ -145,8 +145,12 @@ document is accepted and the values are simply not the ones the suite expects.
 
 ### 5. Valid documents the parser rejects — 3 cases
 
-`goccy` fails to parse these at all (`4MUZ/2` flow mapping with the colon on the next
-line; two `DK95` tab cases). The fix is upstream, or a pre-pass of our own.
+`goccy` fails to parse these at all, so the fix is upstream (or a pre-pass of our own):
+
+- `4MUZ/2` (`{foo\n: bar}`) and `VJP3/1` (a flow mapping spread over five lines) are the
+  same defect twice — inside a **flow** mapping a line break between the key and its `:`
+  is legal, but the parser applies the block-context rule that they share a line;
+- `DK95/4` (`foo: 1\n\t\nbar: 2`) is a line holding only a tab between two entries.
 
 ## Divergences by suite tag
 
