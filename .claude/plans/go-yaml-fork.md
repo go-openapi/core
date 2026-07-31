@@ -5,183 +5,251 @@ Status legend: ✅ done · 🚧 in progress · ⬜ todo · ⏸️ deferred
 Target repo: `github.com/go-openapi/go-yaml` (does not exist yet) ·
 upstream `github.com/goccy/go-yaml` @ `v1.19.2` (`edee2f9`) · MIT.
 
-Consumer: `json/lexers/yaml-lexer` (`YL`) in this repo — today the **only** go-openapi
+Consumer: `json/lexers/yaml-lexer` (`YL`) in this repo — today the only go-openapi
 consumer of goccy.
 
-## 0. Why fork
+## 0. Goals
 
-Fred's call, 2026-07-31: *"our YAML support is starting to cost a lot more in various
-workarounds… we'll fix it to our liking and percolate improvements upstream as they see
-fit and at their own pace (like we did last year for testify)."*
+Fred's, 2026-07-31, in priority order:
 
-The supporting measurements:
+- **G1 — simplify `YL`,** our JSON-compatible YAML lexer.
+- **G2 — add YAML streaming,** which does not exist in Go today.
 
-| | |
-|---|---|
-| upstream commits, last 12 months | **14** (last one 2026-04-07) |
-| upstream external dependencies | **0** |
-| licence | MIT — fork-friendly, retain copyright |
-| total upstream size | 30.6k loc |
-| the part `YL` uses (`parser`/`ast`/`scanner`/`lexer`/`token`) | **12.8k loc, self-contained** |
-| the part it does not (`decode`/`encode`/`printer`) | 17.8k loc |
-| workaround code in `walk.go` written *because of* upstream | 85 loc (of 856) |
-| conformance divergences that are upstream's, not ours | **12 of 32** xfail entries |
+And two that follow from those rather than motivating them:
 
-Upstream is not hostile, it is **dormant**. At 14 commits a year, a PR queue is not a
-viable path for a dozen fixes we need now. That is the whole argument; there is no
-quality complaint about goccy, which is a good parser we are building on precisely
-because it is the best available in Go.
+- **G3** — fix the 12 conformance divergences that are upstream's behaviour, not ours.
+- **G4** — delete the workarounds `YL` carries for upstream defects (85 loc).
 
-### What forking does *not* buy us
+**Why goccy specifically.** It was chosen *because it is a low-level YAML library*:
+`scanner`, `lexer`, `parser`, `ast` and `token` are public, separable packages rather than
+a `Marshal`/`Unmarshal` facade over a hidden parser. Every other Go YAML library exposes
+only the decode surface. That is the substrate G2 needs, and the fork is about exploiting
+it rather than replacing it.
 
-Stated up front so the plan is not oversold:
+**Why fork rather than send PRs.** Upstream is dormant, not hostile: **14 commits in 12
+months**, last 2026-04-07. At that rate a PR queue cannot carry an architectural change.
+There is no quality complaint about goccy — it is the best low-level YAML library in Go,
+which is the whole reason we are here.
 
-- **Multi-document streams** (14 xfail entries) stay rejected. That is `YL`'s design
-  boundary — a JSON token stream has one root — not an upstream defect. Same class of
-  decision as eliding separators: settled, not blocked.
-- **`RR7F`** stays failing. It is a defect in the *test fixture*
-  ([yaml-test-suite#179](https://github.com/yaml/yaml-test-suite/issues/179)), unfixable
-  from our side and unlikely to be fixed upstream (that repo looks unmaintained too).
-- **Panic-freedom** is not a driver. Our `safeParse` recover is defensive: 14 pathological
-  inputs (deep nesting, alias cycles, NUL, truncated flow) were probed against the raw
-  parser and **none panicked**. The one fatal we ever hit was a stack overflow in *our*
-  `resolveMapping`, not goccy's.
-- **Performance** is not a driver. No measurement suggests goccy's parser is our bottleneck.
+### What forking does *not* buy
+
+Recorded so the case is not oversold:
+
+- **Multi-document streams** stay rejected by `YL` (14 xfail entries) — a design boundary
+  of projecting onto a single-root JSON token stream, not an upstream defect.
+- **`RR7F`** stays failing: a defect in the *fixture*
+  ([yaml-test-suite#179](https://github.com/yaml/yaml-test-suite/issues/179)).
+- **Panic-freedom** is not a driver. 14 pathological inputs (deep nesting, alias cycles,
+  NUL, truncated flow) were probed against the raw parser and **none panicked**; our
+  `safeParse` recover is defensive. The one fatal we ever hit was a stack overflow in *our*
+  `resolveMapping`.
 
 ## 1. Decisions taken
 
 | id | decision | chosen |
 |---|---|---|
-| **F1** | scope | **parser subtree only** — `parser`, `ast`, `scanner`, `lexer`, `token`. Drop `decode`, `encode`, `printer`. |
-| **F2** | relationship to upstream | **tracking fork, minimal diff** — keep our changes a small, rebase-friendly patch set so each fix cherry-picks cleanly upstream. |
-| **F3** | module path | **`github.com/go-openapi/go-yaml`** — keeps the upstream name, exactly as `go-openapi/testify` kept stretchr's. |
+| **F1** | scope | **Keep the whole tree.** `decode`/`encode`/`printer` stay, dormant — not developed, but not deleted, so upstream changes to them apply cleanly. |
+| **F2** | tracking | **Tracking fork; rebase stays possible.** Our changes are a patch series over upstream, not a divergent rewrite of the repository. |
+| **F3** | module path | **`github.com/go-openapi/go-yaml`** — keeps the upstream name, as `go-openapi/testify` kept stretchr's. |
+| **F4** | architecture | **Iterator-first internals.** The streaming iterator is the primitive; the existing slice-returning API (`token.Tokens`, `Scan`, `Tokenize`) becomes a thin wrapper that collects it. Existing callers keep working unchanged. |
 
-F1 is safe: the subtree is genuinely self-contained. `parser`'s only import of the root
-package is in `parser_test.go`; no non-test file in the subtree reaches outside it, and the
-module has zero external dependencies.
+F1 reverses an earlier draft that deleted the 17.8k loc we do not use. Fred's reasoning:
+**deletion is what makes rebase expensive.** A deletion commit re-conflicts with every
+upstream commit touching those files, and the decoder is where upstream activity actually
+lives. Keeping the files dormant costs nothing and keeps the merge cheap. Measured:
 
-### ⚠ F1 and F2 pull against each other — how that is resolved
+| upstream commits, last 12 months | 14 |
+|---|---|
+| …touching `parser`/`scanner`/`lexer`/`ast`/`token` | **5** |
+| …touching `scanner` alone (our deepest changes) | **1** |
+| …touching `decode`/`encode`/root (kept dormant, so conflict-free) | 9 |
 
-Deleting 58% of the tree is, mechanically, an enormous diff. "Minimal diff" and "delete
-`decode`/`encode`" cannot both be satisfied naively. The reconciliation:
+So the majority of incoming change lands in files we keep and never edit, and the area we
+rewrite hardest sees roughly one upstream commit a year.
 
-**Track upstream by `merge`, never by `rebase`.**
+F4 is the key design move, and it dissolves the apparent conflict between F2 and G2:
+streaming does not become a parallel implementation to be kept in sync, it becomes the
+*implementation*, with the old API expressed in terms of it. One scanner, one grammar.
 
-- With **rebase**, our patch series is replayed onto each new upstream tip. The deletion
-  commit would re-conflict with *every* upstream commit touching those files — and since
-  most upstream activity is in the decoder, that is most commits. This is the combination
-  that would hurt.
-- With **merge**, the deletion is recorded **once** in history. A later upstream commit
-  that modifies a file we deleted raises a single modify/delete conflict, resolved as
-  "stay deleted" once, and never again for that commit.
-
-So: the diff that matters for F2 is not "our tree vs upstream's tree" (large, and
-irrelevant), it is **"our behavioural changes vs upstream's behaviour"** (small, and the
-thing we actually want to keep cherry-pickable). Every fix in §3 is authored as one
-self-contained commit touching only the parser subtree, so
-`git format-patch` against upstream produces a clean PR for each.
-
-Branch layout in the fork:
+## 2. Where the current pipeline stands
 
 ```
-upstream   pristine mirror of goccy/go-yaml. Never edited. Advanced by
-           `git fetch upstream && git merge --ff-only`.
-master     ours. = upstream + [one deletion commit] + [the §3 patch series].
+[]byte ──string()──► []rune ──Scanner.Scan()──► token.Tokens (ALL) ──►
+    CreateGroupedTokens: 9 sequential whole-slice passes ──►
+        parser.parse: per document group ──► *ast.File
 ```
 
-## 2. Phase A — stand up the fork ⬜
+Measured on a 0.32 MB OpenAPI-shaped document (live heap, result held):
 
-1. ⬜ Create `github.com/go-openapi/go-yaml`, push `upstream` branch = goccy `edee2f9`
-   verbatim, tag it `upstream/v1.19.2` for provenance.
-2. ⬜ Retain goccy's `LICENSE` unmodified (MIT requires the copyright notice survive).
-   Add `NOTICE.md`: what this is, what it forked from, at which commit, and why.
-3. ⬜ One commit, `chore!: reduce to the parser subtree`, deleting `decode`/`encode`/
-   `printer` and the root package, plus their tests. Keep the upstream test suites for
-   everything retained — they are the regression net for §3.
-4. ⬜ `go.mod` → `module github.com/go-openapi/go-yaml`, `go 1.25.0`. Mechanical import
-   rewrite across the retained tree.
-5. ⬜ CI mirroring this repo's: build/test/`-race`, `golangci-lint`, CodeQL, vulnerability
-   scan. **Add fuzzing of `parser.ParseBytes`** — upstream has none, and every defect in
-   §3 is a parser-input defect.
-6. ⬜ Point `core` at it: 4 import sites in `walk.go`/`lexer.go` plus one test helper.
-   Develop against a `replace` directive; drop it at the first tag.
+| stage | retained | vs source |
+|---|---|---|
+| `[]rune(src)` | 1.2 MB | **4×** — the scanner indexes runes, not bytes |
+| all tokens | 7.4 MB | 23× |
+| `*ast.File` (holds the tokens) | 10.0 MB | **32×** |
+| `YL`'s materialised token stream | 2.8 MB | 9× |
 
-**Exit criterion:** `core`'s full test suite, conformance harness and `FuzzYL` corpus pass
-against the fork with *zero* behavioural change. The fork is a no-op before it is an
-improvement.
+Peak through a full `YL` lex is on the order of **40× the source**. A 10 MB OpenAPI
+document costs ~400 MB, and nothing can be emitted until all of it is parsed.
 
-## 3. Phase B — the patch series ⬜
+Three properties of the existing code decide the work:
 
-Ordered by value to us. Each is one atomic, upstreamable commit with a test derived from
-the YAML Test Suite id. The write-up already exists as `PROPOSALS-go-openapi.md` in the
-goccy checkout and should move into the fork as the PR queue.
+1. **`Scanner.Scan()` is already incremental in output** — it returns a token batch per
+   call and signals `io.EOF`. Good news: the scanning loop does not need re-inventing.
+2. **`Scanner.Init(text string)` is not incremental in input** — `src := []rune(text)`
+   materialises the whole document as 4-byte runes, and there is no reader entry point.
+   This is also the *root cause* of the offset defect we worked around on 2026-07-31:
+   `Position.Offset` is a rune index because the scanner indexes runes.
+3. **`CreateGroupedTokens` is the real barrier** — nine sequential passes over the complete
+   token slice (line comments, literal/folded, anchor/alias, scalar tags, anchor+tag, map
+   keys, key/value, directives, documents) before parsing can begin.
+   `parser.parse` itself already loops document-at-a-time.
 
-| # | fix | upstream ref | what `core` deletes |
+## 3. Phase S — streaming (G2) ⬜
+
+The target, expressed in the F4 shape:
+
+```go
+// new primitives
+func (s *Scanner) InitReader(r io.Reader)                       // byte sliding window
+func (s *Scanner) All() iter.Seq2[*token.Token, error]           // streaming tokens
+
+// existing API, preserved, now wrappers
+func (s *Scanner) Init(text string)  { s.InitReader(strings.NewReader(text)) }
+func (s *Scanner) Scan() (token.Tokens, error)                   // one batch, as today
+func Tokenize(src string) token.Tokens                           // collects All()
+```
+
+Three pieces of work, in dependency order:
+
+1. ⬜ **S1 — byte-based, reader-fed scanner.** Replace `source []rune` with a byte buffer
+   over an `io.Reader` and a sliding window. Kills the 4× blow-up, makes
+   `Position.Offset` a true byte offset (so **P2 below disappears rather than being
+   fixed**), and is the prerequisite for everything else. Confined to `scanner`; upstream
+   touched that package once in the last year.
+2. ⬜ **S2 — grouping as an iterator pipeline.** The nine passes are transformations over a
+   token sequence, which is exactly what chains of `iter.Seq` express. Each becomes a stage
+   with **bounded lookahead** instead of a whole-slice pass. Needs a per-pass audit of how
+   far each must look ahead — recorded as an open question below, because a pass needing
+   unbounded lookahead would have to stay buffering.
+3. ⬜ **S3 — per-document parse.** `parser.parse` already loops per document group; expose
+   that as `iter.Seq2[*ast.DocumentNode, error]` so a consumer can process and discard one
+   document at a time.
+
+**What streaming cannot do, and must be documented as a contract, not discovered later:**
+
+- **Aliases pin their anchors.** `*x` re-emits the anchored node, so anchored subtrees must
+  be retained until the document ends. Memory becomes O(anchored content), not O(1). A
+  document that anchors its root streams no better than today. For OpenAPI this is
+  cheap — anchors are rare and small — but the bound belongs in the API docs.
+- **Merge keys (`<<`)** likewise retain the merged mapping.
+- **Duplicate-key rejection** needs the keys of every open mapping — O(open mapping size),
+  bounded by nesting depth, acceptable.
+
+## 4. Phase Y — what `YL` becomes (G1) ⬜
+
+Today `YL` reads a whole `*ast.File` and materialises every token into a slice
+(`walk.go`, 856 loc). On top of Phase S it becomes a **projection over a streaming token
+source**: pull YAML tokens, track container state, emit JSON tokens. What that removes:
+
+| removed from `YL` | why |
+|---|---|
+| the materialised `[]emit` slice | tokens are produced on demand (9× source, gone) |
+| `byteOffset` + `indexLines` (49 loc) | S1 gives true byte offsets natively |
+| `stripBOM` + position correction (9 loc) | fixed in the fork (P3) |
+| `patchBlockSpan` (13 loc) | **see the ordering constraint below** |
+
+> ⚠ **`patchBlockSpan` is a hard dependency, not a cleanup.** It works today by
+> *back-patching* a block container's opening delimiter after the contents have been seen.
+> A streaming `YL` cannot retract a token it has already emitted. So **P1 (real spans for
+> block collections) must land in the fork before the streaming `YL`**, or the streaming
+> path cannot report block-container positions correctly. This ordering is the one place
+> where the defect series and the streaming work are coupled.
+
+## 5. Phase B — the defect patch series (G3, G4) ⬜
+
+Each is one atomic, upstreamable commit with a test carrying its YAML Test Suite id. The
+write-up exists as `PROPOSALS-go-openapi.md` in the goccy checkout and should move into the
+fork to become the PR queue.
+
+| # | fix | upstream ref | note |
 |---|---|---|---|
-| **P1** | Block collections have no usable span: `Start` is a separator token *inside* the first entry, `End` is nil. Add `Span()`, or make `Start`/`End` mean what they say. | §1, rel. #733 | `patchBlockSpan` (13 loc) + its ordering caveat in the API docs |
-| **P2** | `Position.Offset` is a 1-based **rune** index, undocumented; and loses one more per preceding comment line. | §1b, #856 | `byteOffset` + `indexLines` (49 loc) |
-| **P3** | A leading UTF-8 BOM is not stripped, changing the parse (`<BOM>{}` lexes as a scalar). | new | `stripBOM` + position correction (9 loc) |
-| **P4** | 9 documents accepted that YAML 1.2 forbids — comment placement, plain `-` in flow, tabs/indent in flow. | §2 | 9 xfail entries |
-| **P5** | 3 valid documents rejected: line break between key and `:` inside a **flow** mapping (`4MUZ/2`, `VJP3/1`); a tab-only line between block entries (`DK95/4`). | §3 | 3 xfail entries |
-| **P6** | Comments in flow maps fail to parse. | #903 | — (not yet a divergence for us) |
-| **P7** | Wrong line for a multiline token at end of input. | #813 | — |
-
-P1–P3 are *our* workarounds: ~71 loc plus tests, and the removal of two documented
-caveats from `YL`'s public contract. P4–P5 are the conformance win.
-
-Note P2 has an upstream-compatibility wrinkle worth deciding in the fork: changing
-`Offset`'s meaning is breaking for goccy's own users, which is exactly why upstream may
-prefer the documentation-only fix. In *our* fork we can simply make it a 0-based byte
-offset. The upstreamable version of the commit should therefore add a `ByteOffset` field
-rather than redefine `Offset`, so the PR is acceptable as-is.
+| **P1** | Block collections have no usable span: `Start` is a separator *inside* the first entry, `End` is nil. | §1, rel. #733 | **blocks Phase Y** |
+| **P2** | `Position.Offset` is a 1-based rune index, undocumented, and loses one more per preceding comment line. | §1b, #856 | **subsumed by S1** — becomes a doc fix upstream only |
+| **P3** | A leading UTF-8 BOM is not stripped, changing the parse (`<BOM>{}` lexes as a scalar). | new | |
+| **P4** | 9 documents accepted that YAML 1.2 forbids — comment placement, plain `-` in flow, tabs in flow. | §2 | 9 xfail entries |
+| **P5** | 3 valid documents rejected: line break between key and `:` in a **flow** mapping (`4MUZ/2`, `VJP3/1`); a tab-only line between block entries (`DK95/4`). | §3 | 3 xfail entries |
+| **P6** | Comments in flow maps fail to parse. | #903 | not yet a divergence for us |
+| **P7** | Wrong line for a multiline token at end of input. | #813 | |
 
 ### Expected conformance outcome
 
-Baseline today (measured, `TestConformanceYAML`): **226/249 accepted-and-matching (91%)**,
+Baseline (measured, `TestConformanceYAML`): **226/249 accepted-and-matching (91%)**,
 85/94 rejected, 32 xfail entries.
 
-| after | xfail entries | note |
+| after | xfail | note |
 |---|---|---|
 | today | 32 | |
-| P4 + P5 | **20** | removes all 12 that are upstream's behaviour |
-| \+ the 5 scalar-resolution cases | **15** | those need individual reading; not yet attributed |
+| P4 + P5 | **20** | removes all 12 that are upstream's behaviour; reject rate 94/94, match 229/249 (**92%**) |
+| \+ the 5 scalar-resolution cases | 15 | need individual reading; not yet attributed |
 | floor | **15** | 14 multi-document (design) + `RR7F` (fixture defect) |
 
-At 20 the reject rate becomes 94/94 and accepted-and-matching 229/249 (**92%**). Everything
-still failing is then *by construction* either our design boundary or a broken fixture —
-which is the real goal here: an xfail list with no entries that are merely someone else's
-backlog.
+The goal is an xfail list containing nothing that is merely someone else's backlog.
 
-## 4. Phase C — percolate upstream ⏸️
+## 6. Phase A — stand up the fork ⬜
 
-Open one PR per §3 commit against goccy, on their timetable, not ours. No coupling: the
-fork ships whether or not they land. Keep `PROPOSALS-go-openapi.md` as the tracking index
-with a status per item.
+1. ⬜ Create the repo; push `upstream` = goccy `edee2f9` verbatim; tag `upstream/v1.19.2`.
+2. ⬜ Keep `LICENSE` unmodified (MIT requires the notice survive). Add `NOTICE.md`: what
+   this is, forked from where and at which commit, and why.
+3. ⬜ `go.mod` → `module github.com/go-openapi/go-yaml`, `go 1.25.0` (needed for `iter`).
+   Mechanical import rewrite. Nothing deleted (F1).
+4. ⬜ CI mirroring this repo's: build/test/`-race`, `golangci-lint`, CodeQL, vuln scan.
+   **Add fuzzing of `parser.ParseBytes`** — upstream has none, and Phase S rewrites the
+   most input-sensitive code in the library.
+5. ⬜ Keep the dormant packages' tests **running**: free regression cover proving the
+   Phase S internals did not change public behaviour.
+6. ⬜ Point `core` at it (4 import sites plus a test helper) via `replace`; drop at first tag.
 
-If upstream later adopts a fix, our merge from `upstream` will conflict with our own
-version of it; resolve by taking theirs and dropping ours, shrinking the patch series. That
-is the success condition, not a cost.
+**Exit criterion:** `core`'s full suite, the conformance harness and the `FuzzYL` corpus
+pass against the fork with *zero* behavioural change. The fork is a no-op before it is an
+improvement.
 
-## 5. Risks
+```
+upstream   pristine mirror. Never edited. `git fetch upstream && git merge --ff-only`.
+master     ours = upstream + patch series (Phase B, then S, then Y).
+```
 
-- **Divergence drift.** The patch series only stays cherry-pickable if it stays disciplined
-  — no drive-by refactors mixed into behavioural commits. Enforced by review, and by the
-  `format-patch` check being part of CI.
-- **We inherit maintenance of a YAML parser.** 12.8k loc with no external deps, and we now
-  own its security surface. Mitigated by the fuzzing added in Phase A step 5 — which is a
-  net *gain* in assurance over depending on an unfuzzed upstream.
-- **Scope creep toward a full YAML library.** F1 deliberately excludes decode/encode. If
-  go-openapi later wants to consolidate `swag/yamlutils` (and the 7 repos on
-  `go.yaml.in/yaml/v3`) onto this fork, that is a **separate decision with its own plan** —
-  it would mean either re-adding goccy's reflection-based decoder or building one on our
-  own JSON tooling. Not in scope here.
+## 7. Phase C — percolate upstream ⏸️
 
-## 6. Open questions
+One PR per Phase B commit, on their timetable. No coupling: the fork ships regardless.
+Phase S is not upstreamable and no attempt should be made — it is an architectural change
+a dormant project cannot absorb. If upstream later adopts one of our fixes, the merge
+conflicts with our version; resolve by taking theirs and dropping ours. That shrinks the
+patch series, which is the success condition.
 
-- ⬜ Tag/version policy for the fork: start at `v0.1.0` while `core` tracks it via
-  `replace`, or go straight to `v1.0.0` on the first green conformance run?
-- ⬜ Should `lexer`/`scanner` be demoted to `internal/` so the fork's public surface is
-  just `parser`/`ast`/`token` (all `YL` imports)? They must be *retained* either way —
-  `parser` depends on both — so this is purely about what we commit to supporting.
-  Leaning **no**: moving packages is a large, permanent diff against upstream for a
-  cosmetic gain, and F2 says keep the diff cherry-pickable.
+## 8. Risks
+
+- **Phase S is a real rewrite of the most subtle code in the library.** 1.8k loc of
+  context-sensitive scanning. Mitigations: upstream's own scanner/lexer/parser test suites
+  are retained and must stay green throughout; the conformance harness (406 cases) and
+  `FuzzYL` are the outer net; fuzzing is added *before* S1 starts, not after.
+- **We now own a YAML parser's security surface.** Mitigated by the fuzzing above, which is
+  a net gain over depending on an unfuzzed upstream.
+- **Patch-series discipline.** Cherry-pickability survives only if behavioural commits stay
+  free of drive-by refactors.
+- **Scope creep into a full YAML library.** F1 keeps decode/encode *dormant* — present, not
+  developed. Consolidating `swag/yamlutils` and the 7 go-openapi repos on
+  `go.yaml.in/yaml/v3` onto this fork is a **separate decision with its own plan**.
+
+## 9. Open questions
+
+- ⬜ **Lookahead audit of the nine grouping passes** (blocks S2). Which are bounded? A pass
+  needing unbounded lookahead must stay buffering, and would cap what streaming can
+  deliver. This is the single biggest unknown in the plan and should be answered before
+  committing to S2's design.
+- ⬜ **Iterator signature**: `iter.Seq2[*token.Token, error]` per token, or per batch as
+  `Scan()` does today? Per-token is the cleaner primitive; per-batch matches the existing
+  shape and may avoid re-plumbing the grouping stages.
+- ⬜ **Version policy**: `v0.x` while `core` tracks by `replace`, or `v1.0.0` at the first
+  green conformance run?
+- ⬜ Do we keep `ParseFile`/`os` access in the fork, or is a reader-only surface preferable
+  for a library go-openapi embeds?
