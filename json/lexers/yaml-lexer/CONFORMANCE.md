@@ -4,12 +4,18 @@ Baseline measured against the vendored [YAML Test Suite](testdata/yaml-test-suit
 (revision `da267a5c`, 351 files → **406 cases**), by `TestConformanceYAML`.
 
 ```
-accept + token stream matches the expected JSON   226 / 272   (83%)
+accept + token stream matches the expected JSON   226 / 249   (91%)
 invalid document rejected                          85 /  94   (90%)
 recorded only (no single-root JSON equivalent)     63
 known divergences (conformanceXFail)               32
   of which out of scope by design                  14
 ```
+
+The 249 is the population actually compared: 272 cases carry a `json` field, but 23 of
+them express several JSON values in sequence, so there is no single token stream to
+match and they are recorded instead (they make up 23 of the 63 above, the other 40
+having no `json` field at all). Counting them in the denominator would mark us wrong
+on cases we never attempt.
 
 Resolved-scalar mapping keys landed (22 cases): a key carrying an explicit-key marker,
 a tag, an anchor or an alias now resolves to the string it denotes. See §"Resolved keys"
@@ -47,10 +53,14 @@ The [YAML Test Matrix](https://matrix.yaml.info/) publishes a **JSON output** co
 over the same suite — "is the loaded data equal to the `json` field" — which is the same
 question we ask. Its denominator is 401 (308 valid + 93 invalid).
 
-Our comparable slice is 366 cases (272 with a single-root JSON expectation + 94 invalid),
-scoring **311 → 85%**. Counting the 40 cases with no JSON equivalent as misses instead —
-a stricter reading — gives **311/406 → 77%**. So we sit somewhere in **77–85%** depending
-on how the out-of-scope cases are counted.
+Our comparable slice is 343 cases (249 with a single-root JSON expectation + 94 invalid),
+scoring **311 → 91%**. Counting every case in the suite as a miss when we do not match it —
+a stricter reading, and a harsher denominator than the matrix's — gives **311/406 → 77%**.
+So we sit somewhere in **77–91%** depending on how the out-of-scope cases are counted.
+
+Take the 91% with the caveat below firmly in mind: the matrix's 401 denominator *includes*
+multi-document streams, which we exclude by design. The upper figure is measured on a
+friendlier base than theirs, so it is not a like-for-like ranking.
 
 | implementation | JSON comparison |
 |---|---|
@@ -58,7 +68,7 @@ on how the out-of-scope cases are counted.
 | JS yaml | 92% |
 | Perl YAML::PP | 92% |
 | Haskell HsYAML | 91% |
-| **`YL` (this lexer)** | **77–85%** |
+| **`YL` (this lexer)** | **77–91%** |
 | Python ruamel.yaml | 78% |
 | Perl YAML::PP+libyaml | 78% |
 | JS js-yaml | 76% |
@@ -81,9 +91,11 @@ Read that carefully rather than as a ranking — three things make it not apples
   over-permissive accepts and the 3 parse failures — are goccy's behavior, not ours, and we
   cannot beat it without pre-validating ourselves.
 
-The useful takeaway: **we are now above the mainstream loaders** (PyYAML 75%, psych 76%,
-go-yaml 76%, ruamel 78%) and below the four leaders. Resolved-scalar keys were the single
-biggest gap and are now closed, which is what moved 79% → 85%.
+The useful takeaway: on the cases we actually attempt we are **level with the leaders**, and
+on the strictest possible reading still **at the mainstream loaders' level**. The truth is
+that the two numbers answer different questions, and neither is directly comparable to the
+matrix. Resolved-scalar keys were the single biggest gap and closing them is what moved the
+compared figure to 91%.
 
 ## The 32 remaining entries
 
