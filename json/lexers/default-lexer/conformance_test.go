@@ -46,10 +46,13 @@ func TestConformanceParsing(t *testing.T) {
 			continue
 		}
 
-		data, rerr := os.ReadFile(filepath.Join(dir, name))
+		raw, rerr := os.ReadFile(filepath.Join(dir, name))
 		if rerr != nil {
 			t.Fatalf("cannot read %s: %v", name, rerr)
 		}
+		// A fixture's exact bytes ARE the test, so a checkout that translated them must not change the verdict:
+		// see normalizeLineEndings and TestConformanceFixturesAreStoredWithLF.
+		data := normalizeLineEndings(raw)
 		maximum := len(data) + 16 // generous upper bound on token count
 
 		var want byte
@@ -191,16 +194,17 @@ func checkIBehaviorGolden(t *testing.T, iReport []string) {
 		return
 	}
 
-	want, err := os.ReadFile(golden)
+	raw, err := os.ReadFile(golden)
 	if err != nil {
 		t.Fatalf("cannot read %s (run with -update-golden to create it): %v", golden, err)
 	}
+	want := string(normalizeLineEndings(raw)) // the golden records verdicts, not bytes on a line
 
-	if string(want) == got {
+	if want == got {
 		return
 	}
 
-	wantLines := strings.Split(strings.TrimRight(string(want), "\n"), "\n")
+	wantLines := strings.Split(strings.TrimRight(want, "\n"), "\n")
 	gotLines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 	t.Errorf("implementation-defined behavior changed (%d recorded cases, %d now).\n"+
 		"If the change is intended, re-run with -update-golden and review the diff.", len(wantLines), len(gotLines))
