@@ -42,7 +42,7 @@ maintainability, near-zero bugs, far more internal testing, a v1→v2 migration 
 documentation. But it was warranted by a bad starting position and an upstream in
 architectural lock-down. **goccy's starting position is better**, so the same medicine is
 not indicated. What carries over from testify is the *operating model*, not the fork depth —
-see §9.
+see §10.
 
 ### What forking does *not* buy
 
@@ -142,6 +142,22 @@ Where goccy's 47 ms goes:
 | `CreateGroupedTokens` (9 passes) | 4.5 ms | 10% |
 | AST construction | ~18.5 ms | **39%** |
 
+**But the 2× understates it badly, because it was measured on a *nested* document.** goccy's
+parse time is **quadratic in the number of sibling keys at one level**, which is exactly the
+shape of a real OpenAPI `paths:` mapping. Flat mapping, N keys, time per doubling:
+
+| keys | size | goccy | yaml.v3 | ratio |
+|---|---|---|---|---|
+| 1 000 | 23 KB | 3.4 ms | 0.95 ms | 4× |
+| 4 000 | 92 KB | 32.9 ms | 5.8 ms | 6× |
+| 16 000 | 368 KB | 384 ms | ~17 ms | 23× |
+| 32 000 | 718 KB | **1.17 s** | 40 ms | **30×** |
+| 64 000 | 1.4 MB | **3.85 s** | 91 ms | **42×** |
+
+goccy multiplies by ~4 per doubling (quadratic); yaml.v3 by ~2 (linear). Attributed by
+stage, the scanner and the grouping passes are ~linear — **the quadratic is entirely in
+`parser.Parse`**, 384 ms of the 413 ms total at 16 000 keys.
+
 Three conclusions that shape the work:
 
 1. **The `[]rune` conversion is not a speed problem** (1%). Its costs are the 4× memory and
@@ -151,15 +167,67 @@ Three conclusions that shape the work:
    alone runs at 23.6 MB/s against yaml.v3's 14.1 MB/s for a complete tree, so a streaming
    projection starts with real headroom — the right comparison is our scanner-plus-projection
    against their whole pipeline.
-3. **The AST path stays slower until separately optimised.** Anything in the ecosystem (G5)
-   that wants a document tree rather than a token stream keeps paying the 2×. Closing that
-   is its own work item, not a by-product of Phase S.
+3. **The quadratic is one function, and it must be fixed before anything else.** See Phase P.
+   Until it is, "large documents" (G2) is unreachable regardless of how well we stream:
+   a 1.4 MB file already costs 3.85 s.
 
 **Target to hold ourselves to:** streaming `YL` beats yaml.v3's 14.1 MB/s end-to-end while
 holding memory at O(window) instead of 15× the source. Both halves must be measured; a
 streaming implementation that is slower than the thing it replaces has not delivered G2.
 
-## 3. Phase S — streaming (G2) ⬜
+## 3. Phase P — the quadratic parser (blocks G2) ⬜
+
+**The single highest-value item in this plan, and it is a bug, not a tuning exercise.**
+
+`parser.parseMap` handles a mapping's sibling entries by **recursing once per entry**: each
+recursion parses the remaining siblings into a complete `ast.MappingNode`, and the caller
+then keeps only its `.Values` and discards the node:
+
+```go
+for tk.Column() == keyTk.Column() {          // parser.go:490
+    node, err := p.parseMap(ctx)             // recurse: builds a WHOLE MappingNode
+    ...
+    mapNode.Values = append(mapNode.Values, node.Values...)   // keep Values, drop the node
+}
+```
+
+For a flat mapping of N keys that is N levels of recursion, N discarded `MappingNode`s and
+N slice concatenations — hence the O(N²) time, and O(N) stack depth on *width* rather than
+nesting (which no depth guard, ours included, currently bounds).
+
+It also explains the allocation profile: `parseMap` is **59% of all allocation** (2.1 GB
+cumulative on a 0.32 MB document), and GC work dominates the CPU profile —
+`gcBgMarkWorker` 45%, `scanObjectsSmall` 30%, against 27% for the parse itself.
+
+1. ⬜ **P0a — make sibling parsing iterative.** Accumulate into one `MappingNode` in a loop
+   rather than recursing and concatenating. Expected: O(N²) → O(N), and the bulk of the
+   allocation goes with it. Same treatment for sequences if they share the shape.
+2. ⬜ **P0b — reduce object count.** Positions are allocated individually
+   (`scanner.(*Scanner).pos`, 1.9M objects), as are parser contexts
+   (`context.withChild`, 2.6M) and token-group wrappers (`newTokens`, 2.6M). Slab-allocate
+   tokens and AST nodes, and pass positions by value. Attacks the GC cost directly rather
+   than the parse cost.
+3. ⬜ **P0c — regression guard.** A benchmark asserting near-linear scaling on flat mappings,
+   in the fork's CI. This defect is invisible on small fixtures, which is presumably how it
+   survived.
+
+Note P0b partly overlaps Phase S: the grouping passes' per-token wrappers disappear when
+those passes become iterator stages (S2), so sequencing S2 before P0b avoids optimising
+code that is about to be deleted.
+
+**This is also the most valuable thing we can send upstream** — a clean, reproducible,
+API-neutral bug fix with a benchmark, useful to every goccy user. It should be the first PR.
+
+### Security relevance
+
+Quadratic parsing on untrusted input is an availability problem, not just a slow path.
+go-openapi parses user-supplied OpenAPI documents; a 1.4 MB file with a wide `paths:`
+mapping costs 3.85 s of CPU today, and the cost grows with the square. `YL`'s
+`WithMaxContainerStack` bounds *nesting*, not *width*, so nothing currently guards it.
+Worth treating as a security fix, and worth a `MaxKeysPerMapping`-style bound in `YL`
+until P0a lands.
+
+## 4. Phase S — streaming (G2) ⬜
 
 The target, expressed in the F4 shape:
 
@@ -200,7 +268,7 @@ Three pieces of work, in dependency order:
 - **Duplicate-key rejection** needs the keys of every open mapping — O(open mapping size),
   bounded by nesting depth, acceptable.
 
-## 4. Phase Y — what `YL` becomes (G1) ⬜
+## 5. Phase Y — what `YL` becomes (G1) ⬜
 
 Today `YL` reads a whole `*ast.File` and materialises every token into a slice
 (`walk.go`, 856 loc). On top of Phase S it becomes a **projection over a streaming token
@@ -220,7 +288,7 @@ source**: pull YAML tokens, track container state, emit JSON tokens. What that r
 > path cannot report block-container positions correctly. This ordering is the one place
 > where the defect series and the streaming work are coupled.
 
-## 5. Phase B — the defect patch series (G3, G4) ⬜
+## 6. Phase B — the defect patch series (G3, G4) ⬜
 
 Each is one atomic, upstreamable commit with a test carrying its YAML Test Suite id. The
 write-up exists as `PROPOSALS-go-openapi.md` in the goccy checkout and should move into the
@@ -250,7 +318,7 @@ Baseline (measured, `TestConformanceYAML`): **226/249 accepted-and-matching (91%
 
 The goal is an xfail list containing nothing that is merely someone else's backlog.
 
-## 6. Phase A — stand up the fork ⬜
+## 7. Phase A — stand up the fork ⬜
 
 1. ⬜ Create the repo; push `upstream` = goccy `edee2f9` verbatim; tag `upstream/v1.19.2`.
 2. ⬜ Keep `LICENSE` unmodified (MIT requires the notice survive). Add `NOTICE.md`: what
@@ -273,15 +341,17 @@ upstream   pristine mirror. Never edited. `git fetch upstream && git merge --ff-
 master     ours = upstream + patch series (Phase B, then S, then Y).
 ```
 
-## 7. Phase C — percolate upstream ⏸️
+## 8. Phase C — percolate upstream ⏸️
 
 One PR per Phase B commit, on their timetable. No coupling: the fork ships regardless.
-Phase S is not upstreamable and no attempt should be made — it is an architectural change
+**Phase P should be the first PR** — a reproducible, API-neutral bug fix with a benchmark,
+valuable to every goccy user and the strongest opening for the relationship. Phase S is not
+upstreamable and no attempt should be made — it is an architectural change
 a dormant project cannot absorb. If upstream later adopts one of our fixes, the merge
 conflicts with our version; resolve by taking theirs and dropping ours. That shrinks the
 patch series, which is the success condition.
 
-## 8. Risks
+## 9. Risks
 
 - **Phase S is a real rewrite of the most subtle code in the library.** 1.8k loc of
   context-sensitive scanning. Mitigations: upstream's own scanner/lexer/parser test suites
@@ -296,10 +366,12 @@ patch series, which is the success condition.
   which is why F1 keeps those packages dormant rather than deleted — they are the seed, not
   dead weight. But sequencing matters: G1 and G2 first, on their own merits. The ecosystem
   migration gets its own plan, including whether the 2× AST gap must close first.
-- **The substrate is currently slower than what it replaces.** See §2b. Acceptable for the
-  streaming path, unresolved for the tree path.
+- **The substrate is currently slower than what it replaces** — 2× on nested documents,
+  **42× on wide ones**, because the parser is quadratic in sibling count (§2b). Phase P
+  addresses it and must land first; until then, "large documents" is out of reach and
+  untrusted input is an availability risk.
 
-## 9. Operating model — what carries over from `testify/v2`
+## 10. Operating model — what carries over from `testify/v2`
 
 The fork *depth* does not carry over (§0), but the way that fork was run does. Nine months
 of it produced: a complete rewrite, better maintainability, near-zero bugs, far more
@@ -337,7 +409,7 @@ the strongest argument that this fork can serve G5, and it also sets the migrati
 a `yaml.Node`-tree → `ast.Node` translation, plus `Marshal`/`Unmarshal`, plus the 2× AST
 performance gap from §2b.
 
-## 10. Open questions
+## 11. Open questions
 
 - ⬜ **Lookahead audit of the nine grouping passes** (blocks S2). Which are bounded? A pass
   needing unbounded lookahead must stay buffering, and would cap what streaming can
