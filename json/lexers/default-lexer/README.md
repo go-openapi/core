@@ -60,7 +60,8 @@ Additional objectives:
 
 Non-goals / out-of-scope:
 
-* non-UTF8 encoding
+* non-UTF8 encoding: a UTF-16 or UTF-32 document is transcoded upstream of the lexer, by the caller
+  (see [Document encoding](#document-encoding-utf-8-only))
 * JSON canonicalization (RFC 8785)
 * full SIMD implementation (à la simd-json)
 
@@ -170,9 +171,52 @@ one reach the validator — where an AVX2 port of simdutf's `lookup4` algorithm 
 On the reference corpus, `UTF8Strict` versus no validation is statistically indistinguishable on the four
 ASCII-dominated workloads and costs ~6% (`L`) / ~2% (`VL`) on `twitter_status`, which is 30% non-ASCII by string bytes.
 
-The input must be UTF-8: a UTF-16 document is rejected with `ErrNotUTF8`. A leading UTF-8 BOM is accepted and
-consumed before the first token — RFC 8259 §8.1 permits ignoring one on input and asks implementations not to emit
-one, so it is not reproduced on output (see above).
+### Document encoding: UTF-8 only
+
+**The lexers read UTF-8, and only UTF-8.** Other encodings are out of scope by design: a caller holding UTF-16 or
+UTF-32 pipelines a transcoder in front of the lexer — `New`/`NewVerbatim` take an `io.Reader`, so the conversion is a
+wrapper, and a byte slice is transcoded before it reaches `NewWithBytes`:
+
+```go
+dec := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder() // golang.org/x/text/encoding/unicode
+lx := lexer.New(transform.NewReader(r, dec))                           // golang.org/x/text/transform
+```
+
+`golang.org/x/text` is one option among several; the lexers take on no such dependency of their own.
+
+This is the position RFC 8259 §8.1 settled on: *"JSON text exchanged between systems that are not part of a closed
+ecosystem MUST be encoded using UTF-8"*. Earlier specifications were laxer — RFC 4627 §3 asked only that JSON text be
+"encoded in Unicode", RFC 7159 §8.1 allowed UTF-8, UTF-16 and UTF-32 — and RFC 4627 went as far as describing how to
+sniff the encoding from the pattern of NUL bytes in the first four octets, the first two characters of a JSON text
+always being ASCII:
+
+```
+00 00 00 xx  UTF-32BE
+00 xx 00 xx  UTF-16BE
+xx 00 00 00  UTF-32LE
+xx 00 xx 00  UTF-16LE
+xx xx xx xx  UTF-8
+```
+
+We deliberately do **not** sniff, and would not transcode even if we did. RFC 8259 dropped both the table and the
+multi-encoding allowance, and putting the conversion inside the lexer would cost more than it buys:
+
+* it breaks what `VL` is *for*. Byte-exact round-tripping means reproducing the source bytes; against a transcoded
+  stream, `VL` would emit a re-encoding of the document, not the document;
+* `Offset()`, `Line()` and `Column()` would address the transcoded stream, so an error could no longer be pointed at
+  in the file the caller actually has;
+* the encoding is a fact of the transport (a `charset` parameter, a file convention), which the caller knows and the
+  lexer can only guess at — and, as below, cannot always guess unambiguously.
+
+What the lexers do instead is **diagnose**. A document opening with a UTF-16 or UTF-32 byte order mark is rejected
+with `ErrNotUTF8` rather than with a baffling `invalid JSON token` on its first byte — the document is rejected either
+way, and neither `0xFF`/`0xFE` nor a leading NUL pair can legitimately open a JSON value, so nothing valid is
+misjudged. The error names both encodings and no endianness: UTF-32LE (`FF FE 00 00`) opens with the very bytes of the
+UTF-16LE mark, so pinning the message on one of them would sometimes be precisely wrong. This is an error message, not
+an input mode.
+
+A leading UTF-8 BOM, by contrast, is accepted and consumed before the first token — RFC 8259 §8.1 permits ignoring one
+on input and asks implementations not to emit one, so it is not reproduced on output (see above).
 
 ## Conformance tests
 

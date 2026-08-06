@@ -12,7 +12,7 @@ import (
 // surrogateEscapeLen is the width of the `\uXXXX` that must follow a high surrogate to complete a pair.
 const surrogateEscapeLen = 6
 
-// The UTF-8 byte order mark, and the two UTF-16 ones — the latter recognized only to turn an unhelpful error into an
+// The UTF-8 byte order mark, and the UTF-16/UTF-32 ones — the latter recognized only to turn an unhelpful error into an
 // accurate one.
 const (
 	bomUTF8Len       = 3
@@ -23,9 +23,15 @@ const (
 	bomUTF16LE1 = 0xFE
 	bomUTF16BE0 = 0xFE
 	bomUTF16BE1 = 0xFF
+
+	// UTF-32 marks are FF FE 00 00 (LE) and 00 00 FE FF (BE). The LE one opens with the UTF-16LE mark and so is already
+	// caught by it; only the BE one, which shares no prefix with any other mark, needs its own bytes.
+	bomUTF32Len              = 4
+	bomUTF32BE0, bomUTF32BE1 = 0x00, 0x00
+	bomUTF32BE2, bomUTF32BE3 = 0xFE, 0xFF
 )
 
-// CheckBOM consumes a UTF-8 byte order mark opening the input, and rejects a UTF-16 one.
+// CheckBOM consumes a UTF-8 byte order mark opening the input, and rejects a UTF-16 or UTF-32 one.
 //
 // RFC 8259 §8.1 forbids *emitting* a BOM but explicitly allows an implementation to ignore one on input, and enough
 // producers emit one that rejecting the document outright is unhelpful.
@@ -39,9 +45,12 @@ const (
 // token's leading space (see [VL.LeadingSpace]). A round-trip therefore drops it — the one documented exception to
 // VL's byte-exactness on valid input, and the direction RFC 8259 §8.1 prefers.
 //
-// A UTF-16 document cannot be lexed at all (we are UTF-8 only) and would otherwise fail with a baffling "invalid JSON
-// token" on its first byte; codes.ErrNotUTF8 says what is actually wrong. Nothing is consumed there — the document is
-// rejected either way — and 0xFF/0xFE can never legitimately open a JSON value, so there is no input this misjudges.
+// A UTF-16 or UTF-32 document cannot be lexed at all (we are UTF-8 only) and would otherwise fail with a baffling
+// "invalid JSON token" on its first byte; codes.ErrNotUTF8 says what is actually wrong. Nothing is consumed there — the
+// document is rejected either way — and neither 0xFF/0xFE nor a leading NUL pair can legitimately open a JSON value, so
+// there is no input this misjudges. The error does not name a single encoding: UTF-32LE opens with the very bytes of
+// the UTF-16LE mark, so a truncated window cannot always tell the two apart, and pinning the message on the wrong one
+// is worse than naming both.
 func (in *Input) CheckBOM() {
 	if in.Consumed != 0 || in.Offset != 0 || in.Bufferized < bomUTF16Len {
 		return
@@ -49,8 +58,11 @@ func (in *Input) CheckBOM() {
 
 	data := in.Buffer
 	switch {
-	case (data[0] == bomUTF16LE0 && data[1] == bomUTF16LE1) ||
-		(data[0] == bomUTF16BE0 && data[1] == bomUTF16BE1):
+	case (data[0] == bomUTF16LE0 && data[1] == bomUTF16LE1) || // UTF-16LE, or the opening of UTF-32LE
+		(data[0] == bomUTF16BE0 && data[1] == bomUTF16BE1) || // UTF-16BE
+		(in.Bufferized >= bomUTF32Len && // UTF-32BE, which shares no prefix with the UTF-16 marks
+			data[0] == bomUTF32BE0 && data[1] == bomUTF32BE1 &&
+			data[2] == bomUTF32BE2 && data[3] == bomUTF32BE3):
 		in.Err = codes.ErrNotUTF8
 
 	case in.Bufferized >= bomUTF8Len &&
