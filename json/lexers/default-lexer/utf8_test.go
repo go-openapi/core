@@ -561,15 +561,21 @@ func TestUTF8BOM(t *testing.T) {
 	})
 }
 
-// TestUTF16BOMDiagnostic pins the accurate error for a UTF-16 document, which would otherwise fail as a generic
-// invalid token on its first byte.
+// TestUTF16BOMDiagnostic pins the accurate error for a UTF-16 or UTF-32 document, which would otherwise fail as a
+// generic invalid token on its first byte.
+//
+// UTF-32BE is the case that needs its own bytes: its mark (00 00 FE FF) shares no prefix with the UTF-16 ones. UTF-32LE
+// opens with the UTF-16LE mark, so it is caught by that test — which is why the error names both encodings rather than
+// guessing one.
 func TestUTF16BOMDiagnostic(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		doc  string
 	}{
-		{name: "LE", doc: "\xff\xfe[\x00\"\x00\xe9\x00\"\x00]\x00"},
-		{name: "BE", doc: "\xfe\xff\x00[\x00\"\x00\xe9\x00\"\x00]"},
+		{name: "UTF-16LE", doc: "\xff\xfe[\x00\"\x00\xe9\x00\"\x00]\x00"},
+		{name: "UTF-16BE", doc: "\xfe\xff\x00[\x00\"\x00\xe9\x00\"\x00]"},
+		{name: "UTF-32LE", doc: "\xff\xfe\x00\x00[\x00\x00\x00]\x00\x00\x00"},
+		{name: "UTF-32BE", doc: "\x00\x00\xfe\xff\x00\x00\x00[\x00\x00\x00]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lx := NewWithBytes([]byte(tc.doc))

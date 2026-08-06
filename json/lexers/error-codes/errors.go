@@ -29,7 +29,7 @@ const (
 	ErrUnknownEscape            LexerError = "unknown escape sequence"
 	ErrInvalidRune              LexerError = "invalid rune in unicode escape sequence"
 	ErrInvalidUTF8              LexerError = "invalid UTF-8 sequence in string"
-	ErrNotUTF8                  LexerError = "input is not UTF-8 encoded (UTF-16 byte order mark found)"
+	ErrNotUTF8                  LexerError = "input is not UTF-8 encoded (UTF-16 or UTF-32 byte order mark found)"
 	ErrSurrogateEscape          LexerError = "expected an escaped UTF-16 code point to come as a surrogate pair"
 	ErrDelimitedValue           LexerError = "value should follow a delimiter"
 	ErrCommaInContainer         LexerError = "comma should appear within an object or an array"

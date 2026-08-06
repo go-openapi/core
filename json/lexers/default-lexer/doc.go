@@ -59,6 +59,14 @@
 // them. Measured on the reference corpus, enabling it is free on ASCII-dominated documents and costs ~6% (L) / ~2%
 // (VL) on heavily non-ASCII ones (twitter_status).
 //
-// The input must be UTF-8: a UTF-16 document is rejected with [codes.ErrNotUTF8]. A leading UTF-8 BOM is consumed
+// # Document encoding
+//
+// The input must be UTF-8, as RFC 8259 §8.1 requires for interchange. Other encodings are out of scope: a caller
+// holding UTF-16 or UTF-32 transcodes upstream, by wrapping the reader handed to [New] or [NewVerbatim] (for instance
+// with golang.org/x/text/transform). Transcoding here instead would make [VL] emit a re-encoding of the document
+// rather than the document, and would leave Offset/Line/Column addressing a stream the caller never had.
+//
+// A document opening with a UTF-16 or UTF-32 byte order mark is therefore not decoded but diagnosed: it is rejected
+// with [codes.ErrNotUTF8], which is an error message rather than an input mode. A leading UTF-8 BOM is consumed
 // before the first token and is not re-emitted by [VL] (RFC 8259 §8.1 asks implementations not to emit one).
 package lexer
