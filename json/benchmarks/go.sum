@@ -21,8 +21,8 @@ github.com/go-openapi/swag/pools v0.28.0 h1:HPMZWSAfce3rdVTFcjFiCIBtDg9h4x2QlRrH
 github.com/go-openapi/swag/pools v0.28.0/go.mod h1:kVQefhSK5RWuRe7BXsL8htgBPAMpN7HDGpGEknqugeE=
 github.com/go-openapi/swag/typeutils v0.28.0 h1:nRBKSBXjDgf01VDPB3fWeD9nQuhCOVeIYAkUx2tbkyY=
 github.com/go-openapi/swag/typeutils v0.28.0/go.mod h1:Srm0xFNRZ1Y+vCxJclo5qzx8aj+1pAKda/YfFPrG0dQ=
-github.com/go-openapi/testify/v2 v2.6.0 h1:5PKH2HE7YJ/LuRPQGvSxBRlFXNQhSetBLlGAgUEu3ug=
-github.com/go-openapi/testify/v2 v2.6.0/go.mod h1:SgsVHtfooshd0tublTtJ50FPKhujf47YRqauXXOUxfw=
+github.com/go-openapi/testify/v2 v2.6.1 h1:6CNJhTjMzgaeaH8WhshcsZNPIvRemiOcFpU7seO/y7Q=
+github.com/go-openapi/testify/v2 v2.6.1/go.mod h1:SgsVHtfooshd0tublTtJ50FPKhujf47YRqauXXOUxfw=
 github.com/gobwas/httphead v0.1.0/go.mod h1:O/RXo79gxV8G+RqlR/otEwx4Q36zl9rqC5u12GKvMCM=
 github.com/gobwas/pool v0.2.1/go.mod h1:q8bcK0KcYlCgd9e7WYLm9LpyS+YeLd8JVDW6WezmKEw=
 github.com/gobwas/ws v1.2.1/go.mod h1:hRKAFb8wOxFROYNsT1bqfWnhX+b5MFeJM9r2ZSwg/KY=
