@@ -18,9 +18,9 @@ func TestUncompressStringReader(t *testing.T) {
 	h := s.putCompressedString([]byte(original))
 	size, offset := withOffset(h)
 
-	rdr, redeem := s.uncompressStringReader(s.arena[offset : offset+size])
-	got, err := io.ReadAll(rdr)
-	redeem()
+	session := s.uncompressStringReader(s.arena[offset : offset+size])
+	got, err := io.ReadAll(session.reader)
+	session.redeem()
 
 	require.NoError(t, err)
 	assert.Equal(t, original, string(got))

@@ -9,8 +9,32 @@ import (
 const (
 	defaultCompressionThreshold = 128
 	defaultCompressionLevel     = flate.DefaultCompression // i.e. level 6
-	minCompressedSize           = 9                        // flate never produces compressed strings smaller then 9 bytes
+
+	// minCompressedSize is the shortest DEFLATE stream we expect to see. It only sizes scratch
+	// buffers (see [Store.compressRatioHeuristic]), so being off merely costs a buffer growth.
+	//
+	// It used to be an invariant of the standard library: before go1.27, flate never emitted fewer
+	// than 9 bytes, which is why headerInlinedCompressedString was unreachable. go1.27 rewrote
+	// compress/flate and now produces streams as short as 6 bytes for highly repetitive input, so
+	// this is a heuristic floor and no longer a guarantee.
+	minCompressedSize = 6
+
+	// DEFLATE stored (uncompressed) block framing, used by [compressBound].
+	maxStoredBlockSize    = 65535 // largest payload a single stored block can carry
+	storedBlockHeaderSize = 5     // byte-aligned block header, then LEN and NLEN
+	storedBlockSlack      = 8     // final-block framing and byte alignment
 )
+
+// compressBound returns an upper bound on the size of the DEFLATE stream produced for size bytes of
+// input.
+//
+// DEFLATE is not guaranteed to shrink anything: when the data does not compress, flate falls back to
+// stored (uncompressed) blocks and the output is then *larger* than the input. Since go1.27 that
+// fallback is taken at the default compression level (it was not before, where incompressible data
+// was still Huffman-coded), so sizing a compression scratch at len(value) is no longer enough.
+func compressBound(size int) int {
+	return size + storedBlockHeaderSize*(size/maxStoredBlockSize+1) + storedBlockSlack
+}
 
 type compressionOptions struct {
 	compressionThreshold int
