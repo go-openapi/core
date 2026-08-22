@@ -120,7 +120,7 @@ func (s *Store) Get(h stores.Handle) values.Value {
 	case headerCompressedString: // large compressed string
 		return s.getCompressedString(h)
 	case headerInlinedCompressedString: // small compressed string
-		// this case is not active: flate's minimum size is 9 bytes
+		// this case is not active before go1.27: flate's minimum size before that is 9 bytes
 		return s.getInlinedCompressedString(h)
 	default:
 		assertValidHeader(header)
@@ -196,7 +196,7 @@ func (s *Store) AppendValueBytes(dst []byte, h stores.Handle) (values.Value, []b
 		dst = s.appendUncompressString(dst, s.arena[offset:offset+size])
 		return values.MakeRawValue(token.MakeWithValue(token.String, dst[start:])), dst
 	case headerInlinedCompressedString:
-		// this case is not active: flate's minimum size is 9 bytes
+		// this case is not active before go1.27: flate's minimum size before that is 9 bytes
 		size, payload := inlined(h)
 		var buffer [8]byte
 		out := unpackString(size, payload, buffer[:])
@@ -270,7 +270,7 @@ func (s *Store) WriteTo(writer writers.StoreWriter, h stores.Handle) {
 		writer.StringCopy(inflater)
 		redeem()
 	case headerInlinedCompressedString: // small compressed string
-		// this case is not active: flate's minimum size is 9 bytes
+		// this case is not active before go1.27: flate's minimum size before that is 9 bytes
 		size, payload := inlined(h) // 0-7 bytes
 		var buffer [8]byte
 		out := unpackString(size, payload, buffer[:])
@@ -502,7 +502,8 @@ func (s *Store) putCompressedString(value []byte) stores.Handle {
 		return stores.Handle(headerPart | lengthPart | offsetPart)
 	}
 
-	// this part is never active: min length of a compressed string is 9 bytes
+	// this part starts being active with go1.27: where min length of a compressed string
+	// may be less than 9 bytes.
 	const headerPart = uint64(headerInlinedCompressedString)
 	lengthPart := uint64(l) << headerBits
 	payload := packString(compressed) << (headerBits + smallBits)
