@@ -198,10 +198,13 @@ func (s *Store) AppendValueBytes(dst []byte, h stores.Handle) (values.Value, []b
 	case headerInlinedCompressedString:
 		// this case is not active before go1.27: flate's minimum size before that is 9 bytes
 		size, payload := inlined(h)
-		var buffer [8]byte
-		out := unpackString(size, payload, buffer[:])
+		// a stack array would escape here: the unpacked payload is handed to the pooled inflate
+		// reader. Borrow the scratch so the whole path stays allocation-free.
+		buffer, redeem := borrowBytesWithRedeem(maxInlineBytes + 1)
+		out := unpackString(size, payload, buffer)
 		start := len(dst)
 		dst = s.appendUncompressString(dst, out)
+		redeem() // the result aliases dst, never out: safe to give the scratch back here
 		return values.MakeRawValue(token.MakeWithValue(token.String, dst[start:])), dst
 	default:
 		assertValidHeader(header)
@@ -235,18 +238,20 @@ func (s *Store) WriteTo(writer writers.StoreWriter, h stores.Handle) {
 		redeem()
 	case headerInlinedASCII: // small ascii string inlined: 8 bytes exactly
 		size, payload := inlined(h) // 7 bytes
-		var buffer [8]byte
-		out := unpackASCII(size, payload, buffer[:])
-		writer.StringBytes(out)
+		// writer is an interface, so out escapes and a stack array would be heap-allocated on every
+		// call: amortize it through the pool instead.
+		buffer, redeem := borrowBytesWithRedeem(maxInlineBytes + 1)
+		writer.StringBytes(unpackASCII(size, payload, buffer))
+		redeem()
 	case headerInlinedString: // small string inlined
 		size, payload := inlined(h) // 0-7 bytes (0-8 packed characters)
 		if size == 0 {
 			writer.String("")
 			return
 		}
-		var buffer [8]byte
-		out := unpackString(size, payload, buffer[:])
-		writer.StringBytes(out)
+		buffer, redeem := borrowBytesWithRedeem(maxInlineBytes + 1)
+		writer.StringBytes(unpackString(size, payload, buffer))
+		redeem()
 	case headerNumber: // large number
 		size, offset := withOffset(h)
 		assertOffsetInArena(offset, len(s.arena))
@@ -266,17 +271,18 @@ func (s *Store) WriteTo(writer writers.StoreWriter, h stores.Handle) {
 		size, offset := withOffset(h)
 		assertOffsetInArena(offset, len(s.arena))
 
-		inflater, redeem := s.uncompressStringReader(s.arena[offset : offset+size])
-		writer.StringCopy(inflater)
-		redeem()
+		session := s.uncompressStringReader(s.arena[offset : offset+size])
+		writer.StringCopy(session.reader)
+		session.redeem()
 	case headerInlinedCompressedString: // small compressed string
 		// this case is not active before go1.27: flate's minimum size before that is 9 bytes
 		size, payload := inlined(h) // 0-7 bytes
-		var buffer [8]byte
-		out := unpackString(size, payload, buffer[:])
-		inflater, redeem := s.uncompressStringReader(out)
-		writer.StringCopy(inflater)
-		redeem()
+		buffer, redeemBuffer := borrowBytesWithRedeem(maxInlineBytes + 1)
+		out := unpackString(size, payload, buffer)
+		session := s.uncompressStringReader(out)
+		writer.StringCopy(session.reader)
+		session.redeem()
+		redeemBuffer()
 	default:
 		assertValidHeader(header)
 	}
@@ -414,9 +420,12 @@ func (s *Store) getLargeString(h stores.Handle, _ ...[]byte) values.Value {
 
 func (s *Store) getInlinedCompressedString(h stores.Handle) values.Value {
 	size, payload := inlined(h) // 0-7 bytes
-	var buf [8]byte
-	out := unpackString(size, payload, buf[:])
-	uncompressed := s.uncompressString(out) // if we manage to get there some day, provide buffer
+	// the unpacked payload is handed to the (pooled, hence heap-resident) inflate reader, so a stack
+	// array would escape: borrow the scratch instead.
+	buf, redeem := borrowBytesWithRedeem(maxInlineBytes + 1)
+	defer redeem()
+	out := unpackString(size, payload, buf)
+	uncompressed := s.uncompressString(out) // the caller owns the result: it cannot be recycled
 
 	return values.MakeRawValue(token.MakeWithValue(token.String, uncompressed))
 }
@@ -425,8 +434,10 @@ func (s *Store) getCompressedString(h stores.Handle) values.Value {
 	size, offset := withOffset(h)
 	assertOffsetInArena(offset, len(s.arena))
 
-	buffer := s.getBuffer(s.uncompressRatioHeuristic(size))
-	uncompressed := s.uncompressString(s.arena[offset:offset+size], buffer)
+	// No pre-sized buffer here: uncompressString allocates the result once it knows the inflated
+	// size, so the caller gets an exactly-sized buffer and a wrong ratio guess can never cost a
+	// second allocation.
+	uncompressed := s.uncompressString(s.arena[offset : offset+size])
 
 	return values.MakeRawValue(token.MakeWithValue(token.String, uncompressed))
 }
@@ -488,10 +499,18 @@ func (s *Store) putLargeString(value []byte) stores.Handle {
 }
 
 func (s *Store) putCompressedString(value []byte) stores.Handle {
-	buffer, redeem := borrowBytesWithRedeem(len(value))
+	// the scratch is sized for the worst case, not for len(value): DEFLATE may inflate data that
+	// does not compress (see [compressBound]).
+	buffer, redeem := borrowBytesWithRedeem(compressBound(len(value)))
 	defer redeem()
 	compressed := s.compressString(value, buffer)
 	l := len(compressed)
+
+	if l >= len(value) {
+		// DEFLATE did not shrink this value. Keep the original bytes: storing the "compressed" form
+		// would cost more arena space *and* an inflate round on every read.
+		return s.putLargeString(value)
+	}
 
 	if l > maxInlineBytes {
 		const headerPart = uint64(headerCompressedString)

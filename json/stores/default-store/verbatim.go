@@ -110,14 +110,17 @@ func (s *VerbatimStore) WriteTo(writer writers.StoreWriter, h stores.Handle) {
 
 	switch header {
 	case headerInlinedBlank:
-		var buffer [maxInlineBlanks]byte
-		writer.Raw(s.getInlinedBlanks(h, buffer[:]))
+		// writer is an interface, so the unpacked blanks escape: borrow the scratch rather than
+		// heap-allocating a stack array on every call.
+		buffer, redeem := borrowBytesWithRedeem(maxInlineBlanks)
+		writer.Raw(s.getInlinedBlanks(h, buffer))
+		redeem()
 	case headerCompressedBlank:
 		size, offset := withOffset(h)
 		assertOffsetInArena(offset, len(s.blankArena))
-		inflater, redeem := s.uncompressStringReader(s.blankArena[offset : offset+size])
-		writer.RawCopy(inflater)
-		redeem()
+		session := s.uncompressStringReader(s.blankArena[offset : offset+size])
+		writer.RawCopy(session.reader)
+		session.redeem()
 	default: // not a blank string
 		s.Store.WriteTo(writer, h)
 	}
