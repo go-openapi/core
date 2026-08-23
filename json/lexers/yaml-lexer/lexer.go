@@ -80,7 +80,7 @@ type emit struct {
 // consumed from an untrusted reader, wrap it with [io.LimitReader].
 func New(r io.Reader, opts ...Option) *YL {
 	l := &YL{}
-	l.options = applyWithDefaults(l.options, opts)
+	l.options = applyWithDefaults(opts)
 	l.reset()
 	l.setReader(r)
 
@@ -93,7 +93,7 @@ func New(r io.Reader, opts ...Option) *YL {
 // stay stable until the lexer is done with it.
 func NewWithBytes(data []byte, opts ...Option) *YL {
 	l := &YL{}
-	l.options = applyWithDefaults(l.options, opts)
+	l.options = applyWithDefaults(opts)
 	l.data = data
 	l.reset()
 

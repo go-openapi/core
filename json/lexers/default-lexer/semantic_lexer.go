@@ -68,7 +68,7 @@ type L struct {
 // [BorrowLexerWithBytes] / [BorrowLexerWithReader] functions and the returned redeem closure.
 func New(r io.Reader, opts ...Option) *L {
 	l := new(L)
-	l.options = applyWithDefaults(l.options, opts)
+	l.options = applyWithDefaults(opts)
 	l.in.R = r
 	l.in.Buffer = make([]byte, l.bufferSize)
 	l.in.Bufferized = 0
@@ -88,7 +88,7 @@ func New(r io.Reader, opts ...Option) *L {
 // [BorrowLexerWithBytes] function and the returned redeem closure.
 func NewWithBytes(data []byte, opts ...Option) *L {
 	l := new(L)
-	l.options = applyWithDefaults(l.options, opts)
+	l.options = applyWithDefaults(opts)
 	l.in.R = noopReader
 	l.in.Buffer = data
 	l.in.Bufferized = len(data)

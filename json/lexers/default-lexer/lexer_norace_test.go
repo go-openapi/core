@@ -39,3 +39,57 @@ func TestBorrowRedeemAllocFree(t *testing.T) {
 	})
 	require.Zerof(t, allocs, "borrow→lex→redeem of a small doc must not allocate, got %v", allocs)
 }
+
+// TestBorrowWithOptionsAllocFree pins that passing options to a borrow costs nothing: the variadic slice, the option
+// closures it holds and the [options] struct they build all stay on the stack.
+//
+// [options] carries no pointer field, so applyWithDefaults seeds and returns it by value with no heap traffic — but
+// that only holds while the option closures stay non-escaping, which is a property of inlining and escape analysis
+// rather than of the source. This test fails if a future change (an option capturing a slice, a call site the compiler
+// stops inlining) pushes them to the heap.
+//
+// The options chosen leave the zero-alloc paths intact. WithJSONPointer(true) is deliberately absent: it forfeits the
+// guarantee by design, since the path stack allocates and object keys are copied out of the value buffer.
+//
+// Gated to non-race builds for the same reason as [TestBorrowRedeemAllocFree].
+func TestBorrowWithOptionsAllocFree(t *testing.T) {
+	if pools.DebugBuild {
+		t.Skip("the poolsdebug build allocates a per-borrow redeemer to track redemptions")
+	}
+
+	docA := []byte(`{"a":[1,-2,3.5e2],"b":true}`)
+	opts := func() []Option {
+		return []Option{
+			WithBufferSize(8192),
+			WithMaxContainerStack(64),
+			WithMaxValueBytes(1 << 20),
+			WithoutAVX2(true),
+			WithUTF8Policy(UTF8Replace),
+			WithElideSeparator(false),
+		}
+	}
+
+	// warm the pool so the first Borrow does not allocate the lexer itself
+	_, redeem := BorrowLexerWithBytes(docA, opts()...)
+	redeem()
+
+	allocs := testing.AllocsPerRun(100, func() {
+		l, redeem := BorrowLexerWithBytes(
+			docA,
+			WithBufferSize(8192),
+			WithMaxContainerStack(64),
+			WithMaxValueBytes(1<<20),
+			WithoutAVX2(true),
+			WithUTF8Policy(UTF8Replace),
+			WithElideSeparator(false),
+		)
+		for {
+			tk := l.NextToken()
+			if tk.IsEOF() || !l.Ok() {
+				break
+			}
+		}
+		redeem()
+	})
+	require.Zerof(t, allocs, "borrowing with options must not allocate, got %v", allocs)
+}

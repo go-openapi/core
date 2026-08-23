@@ -14,9 +14,13 @@ type (
 
 var defaultOptions = options{} //nolint:gochecknoglobals // it's okay to keep defaults as a preallocated immutable global
 
-//nolint:staticcheck,unparam // we force defaults options here - the o parameter is only here to avoid any allocation
-func applyWithDefaults(o options, opts []Option) options {
-	o = defaultOptions
+// applyWithDefaults resolves the effective configuration: it seeds [defaultOptions], then applies opts left to right.
+//
+// The options struct holds no pointer, so the seed copy and the returned value stay on the stack: building it costs no
+// allocation.
+func applyWithDefaults(opts []Option) options {
+	o := defaultOptions
+
 	for _, apply := range opts {
 		o = apply(o)
 	}

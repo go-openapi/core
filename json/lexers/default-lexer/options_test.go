@@ -42,8 +42,7 @@ func TestBufferSizeAlignment(t *testing.T) {
 
 	// non-positive sizes are ignored: the option keeps the (aligned) default.
 	for _, bad := range []int{0, -1, -32} {
-		var o options
-		o = applyWithDefaults(o, []Option{WithBufferSize(bad)})
+		o := applyWithDefaults([]Option{WithBufferSize(bad)})
 		if o.bufferSize != defaultBufferBytes {
 			t.Errorf(
 				"WithBufferSize(%d): bufferSize = %d, want default %d",
