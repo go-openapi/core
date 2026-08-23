@@ -191,7 +191,13 @@ func (l *YL) Err() error { return l.err }
 func (l *YL) SetErr(err error) { l.err = err }
 
 // Reset returns the lexer to a clean, source-less state so it can be recycled. It drops the
-// reference to caller-supplied memory (the input buffer) so a pooled lexer does not pin it.
+// references to caller-supplied memory — the input buffer, and the token values that alias it — so a
+// pooled lexer does not pin them while it sits idle.
+//
+// Reset does NOT rebind an input: call [YL.ResetWithBytes] / [YL.ResetWithReader] (or a Borrow*/New*
+// constructor) to lex a new source.
+//
+// Configured options are preserved, and the token slice keeps its capacity for reuse.
 func (l *YL) Reset() {
 	l.data = nil
 	l.reset()
@@ -223,6 +229,10 @@ func (l *YL) setReader(r io.Reader) {
 
 // reset clears the per-input scanning state, preserving allocated capacity for reuse.
 func (l *YL) reset() {
+	// zero the entries before shortening: a token value aliases the source buffer, and an entry left
+	// behind in the retained capacity would keep the previous document's bytes alive. Clearing at
+	// len (not cap) is enough, since every entry a build appends is cleared by the next reset.
+	clear(l.toks)
 	l.toks = l.toks[:0]
 	l.pos = 0
 	l.built = false
