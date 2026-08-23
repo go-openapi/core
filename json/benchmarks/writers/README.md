@@ -79,7 +79,7 @@ Steady-state medians (6×, `benchstat`, AMD Ryzen 7 5800X, `io.Discard` sink):
 The benchmark writes to `io.Discard`, whose `Write` is a no-op. Flushing is therefore
 free, so `our-buffered-2MB` (one flush) performs essentially the same as the default
 `our-buffered` (many free flushes): against this sink, buffer size only changes flush
-*frequency*, which costs nothing. The large-buffer config is where the memory-for-speed
+*frequency*, which costs nothing. The large-buffer config is the point the memory-for-speed
 trade pays off against a *real* sink (file, socket, gzip), where each flush is a syscall:
 there the 4 KiB buffer pays N writes and the 2 MiB buffer pays one. To compare raw
 per-token CPU against easyjson on equal footing, both build the whole document before the

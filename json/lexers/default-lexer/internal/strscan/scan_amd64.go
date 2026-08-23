@@ -31,7 +31,7 @@ const avx2Min = 32
 // when the CPU supports it and enough bytes remain, and to SWAR otherwise.
 // The WithoutAVX2 knob is handled by the caller (it simply never delegates here), so ScanStop always tries the kernel.
 //
-// The non-ASCII result is what lets the string scanners fuse UTF-8 detection into the scan they already perform: a run
+// The non-ASCII result lets the string scanners fuse UTF-8 detection into the scan they already perform: a run
 // this reports as pure ASCII is proven valid UTF-8 with no second pass. Both implementations answer identically.
 func ScanStop(data []byte) (int, bool) {
 	if useAVX2 && len(data) >= avx2Min {

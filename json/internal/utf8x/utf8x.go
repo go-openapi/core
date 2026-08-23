@@ -29,7 +29,7 @@ const (
 // FirstInvalid returns the index of the first byte of the first ill-formed sequence in b, or -1 if b is valid UTF-8.
 //
 // It is the cold, error-path counterpart of [Valid]: callers use [Valid] for the verdict and only come here to report
-// *where* the input went wrong. Keeping the position search separate is what lets [Valid] stay a bulk scan (the same
+// *where* the input went wrong. Keeping the position search separate lets [Valid] stay a bulk scan (the same
 // split simdutf makes between its SIMD checker and rewind_and_validate_with_errors).
 func FirstInvalid(b []byte) int {
 	for i := 0; i < len(b); {

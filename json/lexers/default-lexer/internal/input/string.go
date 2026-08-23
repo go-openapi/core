@@ -187,7 +187,7 @@ func (in *Input) consumeStringWhole() token.T {
 	// proven valid UTF-8 with no second pass and no call; only the rest reaches the validator (see finishStringValue).
 	// Lanes at or after the stop are trimmed off so the answer is exact, matching strscan.ScanStop's.
 	var hi uint64
-	// guard is where the inline probe stops and delegates to the AVX2 scan.
+	// guard marks where the inline probe stops and delegates to the AVX2 scan.
 	// With WithoutAVX2 it is pushed past the buffer so the loop never breaks to delegate — the string is scanned
 	// entirely by the inline SWAR word loop (the pre-AVX2 baseline), no vector call at alin.
 	guard := start + guessLong
