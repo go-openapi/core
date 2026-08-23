@@ -410,7 +410,7 @@ func (l *YL) mergeEntries(src ast.Node) []*ast.MappingValueNode {
 // keyString returns the string form of a scalar mapping key (matching emitKey's token value),
 // used for merge de-duplication. ok is false for a non-scalar (complex) key.
 // maxKeyUnwrap bounds the resolveKey recursion. A key can legitimately stack node properties
-// ("? !!str &a foo"), but only a handful deep; the bound is what stops an alias chain that
+// ("? !!str &a foo"), but only a handful deep; the bound stops an alias chain that
 // resolves back into itself from recursing forever.
 const maxKeyUnwrap = 16
 

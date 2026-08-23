@@ -25,7 +25,7 @@ import (
 func Walk(data []byte) error { return walk(data, false) }
 
 // WalkConvertNumbers is like Walk but converts each number with Float64(), which
-// is where jlexer actually validates number grammar (Raw/JsonNumber do not). This
+// is the point where jlexer validates number grammar (Raw/JsonNumber do not). This
 // rebalances the comparison against the default-lexer, which always validates
 // numbers while lexing — though Float64 also *loses precision*, which the
 // default-lexer never does.

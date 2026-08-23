@@ -208,7 +208,7 @@ multi-encoding allowance, and putting the conversion inside the lexer would cost
 * the encoding is a fact of the transport (a `charset` parameter, a file convention), which the caller knows and the
   lexer can only guess at — and, as below, cannot always guess unambiguously.
 
-What the lexers do instead is **diagnose**. A document opening with a UTF-16 or UTF-32 byte order mark is rejected
+The lexers **diagnose** instead. A document opening with a UTF-16 or UTF-32 byte order mark is rejected
 with `ErrNotUTF8` rather than with a baffling `invalid JSON token` on its first byte — the document is rejected either
 way, and neither `0xFF`/`0xFE` nor a leading NUL pair can legitimately open a JSON value, so nothing valid is
 misjudged. The error names both encodings and no endianness: UTF-32LE (`FF FE 00 00`) opens with the very bytes of the

@@ -50,7 +50,7 @@ func WithUTF8Policy(policy UTF8Policy) BufferedOption {
 // bufferedOptions carries the (immutable, unexported) [Buffered] configuration.
 //
 // It holds configuration only. Runtime state such as the working-buffer redeem handle lives on
-// [buffered], not here — that separation is what lets the configuration be a plain value (no pooling,
+// [buffered], not here — that separation lets the configuration be a plain value (no pooling,
 // no finalizer for the options themselves).
 type bufferedOptions struct {
 	bufferSize int
