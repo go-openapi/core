@@ -7,3 +7,7 @@ Godeps
 .mcp.json
 .worktrees
 go.work.sum
+
+# Compiled avo generator, left behind by `go build` in an _asm module.
+# The committed artifact is the .s it writes (see the go:generate directives).
+**/_asm/_asm
