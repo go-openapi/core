@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package writers compares the throughput and allocations of the in-repo
 // default-writer implementations (unbuffered, buffered, YAML) against
 // mailru/easyjson's jwriter, the writer our design is inspired from.

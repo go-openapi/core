@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package swar provides inlinable SWAR (SIMD-within-a-register) byte-scanning primitives for the lexer's hot paths.
 //
 // Each mask function operates on one 8-byte little-endian word and returns a per-lane mask: the high bit (0x80) is set

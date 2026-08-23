@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package scan holds stateless JSON-scanning primitives shared across the lexer
 // subtree — the default lexer's hot cores and the token package's on-demand
 // unescaper: whitespace skipping and hex / \uXXXX digit decoding.

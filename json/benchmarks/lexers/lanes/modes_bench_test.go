@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package lane
 
 // Compass benchmark (§10.5): a FAIR matrix of every way to drive the two lexers,

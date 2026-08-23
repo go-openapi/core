@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package token defines the JSON token types with their kind.
 //
 // These data structures should be returned by all implementations of a JSON lexer.

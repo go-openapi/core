@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package lexer provides a JSON lexer.
 //
 // The lexer splits a JSON input stream or a slice of bytes into tokens [token.T] (or [token.VT] for verbatim support).

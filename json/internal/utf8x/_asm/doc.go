@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package _asm is a generator-only module for the AVX2 UTF-8 validation kernel.
 //
 // It isolates the avo build-time dependency: only `go generate` (see ../validate_amd64.go) runs it, and the generated

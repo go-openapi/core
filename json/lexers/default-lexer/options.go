@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package lexer
 
 import "github.com/go-openapi/core/json/lexers/default-lexer/internal/input"
@@ -96,9 +99,16 @@ var defaultOptions = options{ //nolint:gochecknoglobals // okay to preallocate i
 	elideSeparator: true,
 }
 
-//nolint:staticcheck,unparam // we force defaults options here - the o parameter is only here to avoid any allocation
-func applyWithDefaults(o options, opts []Option) options {
-	o = defaultOptions
+// applyWithDefaults resolves the effective configuration: it seeds [defaultOptions], then applies opts left to right.
+//
+// It always starts from the defaults, so a lexer borrowed from the pool never inherits the options of the previous
+// borrower.
+//
+// The options struct holds no pointer, so the seed copy and the returned value stay on the stack: building it costs no
+// allocation.
+func applyWithDefaults(opts []Option) options {
+	o := defaultOptions
+
 	for _, apply := range opts {
 		o = apply(o)
 	}

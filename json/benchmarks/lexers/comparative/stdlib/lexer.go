@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package stdlib provides a baseline [lexers.Lexer] implemented on top of the
 // standard library encoding/json tokenizer (v1).
 //

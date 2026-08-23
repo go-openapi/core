@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package lexer
 
 import (
@@ -19,7 +22,7 @@ var lexersPool = poolOfLexers{ //nolint:gochecknoglobals // okay to have a pool 
 
 func (p *poolOfLexers) borrowWithBytes(data []byte, opts ...Option) (*L, func()) {
 	l, redeem := p.BorrowWithRedeem()
-	l.options = applyWithDefaults(l.options, opts)
+	l.options = applyWithDefaults(opts)
 	l.in.R = noopReader
 	l.in.Buffer = data
 	l.in.Bufferized = len(data)
@@ -34,7 +37,7 @@ func (p *poolOfLexers) borrowWithBytes(data []byte, opts ...Option) (*L, func())
 
 func (p *poolOfLexers) borrowWithReader(r io.Reader, opts ...Option) (*L, func()) {
 	l, redeem := p.BorrowWithRedeem()
-	l.options = applyWithDefaults(l.options, opts)
+	l.options = applyWithDefaults(opts)
 	l.in.R = r
 	l.in.Bufferized = 0
 	l.in.WholeBuffer = false  // streaming: the buffer is refilled, values must be copied

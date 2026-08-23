@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package strscan is the long-string scan gate for the lexer's string paths.
 //
 // The lexer probes the first 8-byte word of a string body inline with the [swar.StringStopMask] fast path (the

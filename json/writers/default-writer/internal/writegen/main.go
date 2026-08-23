@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Command writegen lifts the generic commonWriter[T] methods onto a concrete writer type
 // (Buffered, Unbuffered) as verbatim copies with the receiver swapped.
 //

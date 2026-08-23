@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package bcd is a codec for our internal modified BCD encoding scheme.
 //
 // This is modified standard 8-4-2-1 BCD to account for decimal point and scientific notation in JSON numbers.
