@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Allocation counting needs an un-instrumented build: the race detector and the pools
 // tracker (poolsdebug) both allocate per borrow, which would swamp the amortized counts
 // these tests assert.

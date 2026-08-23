@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package jsontext drives the go-json-experiment (encoding/json/v2) jsontext
 // tokenizer over a whole JSON document, so it can be benchmarked as a comparison
 // point for the default-lexer.

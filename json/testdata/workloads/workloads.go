@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package workloads generates deterministic JSON payloads used to stress the
 // lexer benchmarks along different axes (numbers, strings, escapes, nesting,
 // keys, whitespace, ...).

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package lexers exposes interfaces for lexing JSON.
 //
 // The [Lexer] interface allows for picking a specific implementation of a JSON lexer.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package writer exposes an implementation of the JSON writer interface [writers.Writer].
 //
 // It knows how to write JSON tokens [token.T] or [token.VT], JSON values [values.Value] and [values.InternedKey],

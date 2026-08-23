@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package utf8x holds the UTF-8 validation and sanitization primitives shared by the JSON lexers and writers.
 //
 // It lives under json/internal (rather than under a lexer- or writer-private internal package) because it is the only

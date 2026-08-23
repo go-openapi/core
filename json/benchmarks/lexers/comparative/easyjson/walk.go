@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package easyjson drives mailru/easyjson's jlexer over a whole JSON document as
 // a generic recursive walk, so it can be benchmarked as a comparison point for
 // the default-lexer (both are pull-style, []byte-only lexers; easyjson is the

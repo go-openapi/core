@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package lexer_test
 
 // conformanceXFail is the inventory of where YL stands against the YAML Test Suite: every case whose behavior

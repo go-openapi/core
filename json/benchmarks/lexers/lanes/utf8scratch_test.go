@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package lane
 
 // SCRATCH (utf-8 validation prototype): measures the cost of the three prototype

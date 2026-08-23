@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 // Package benchmarks hosts comparative benchmarks for the json building blocks.
 //
 // It is a separate Go module so that the heavy external dependencies pulled in

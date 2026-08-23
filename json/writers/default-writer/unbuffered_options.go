@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 package writer
 
 // UnbufferedOption configures the [Unbuffered] writer. Like the other writer options it threads the configuration

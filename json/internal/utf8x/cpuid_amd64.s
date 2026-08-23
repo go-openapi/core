@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2015-2025 go-swagger maintainers
+// SPDX-License-Identifier: Apache-2.0
+
 #include "textflag.h"
 
 // func cpuid(eaxArg, ecxArg uint32) (eax, ebx, ecx, edx uint32)
