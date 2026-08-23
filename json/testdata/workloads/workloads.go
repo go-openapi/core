@@ -16,6 +16,16 @@ import (
 // targetBytes is the approximate size each generated workload aims for.
 const targetBytes = 256 * 1024
 
+// nestDepth caps how deep the nested_arrays and nested_objects workloads go.
+// encoding/json (since go1.27 it is backed by encoding/json/v2) rejects any
+// document nested deeper than 10000 levels, so a single chain filling
+// targetBytes -- 131072 levels of '[' -- fails on the stdlib lexer. The
+// workloads reach their size by repeating a chain of this depth instead.
+//
+// Keep it modest: the easyjson comparison walks a document recursively, so the
+// depth also bounds the goroutine stack that walk needs.
+const nestDepth = 1000
+
 // Workload is a named JSON payload.
 type Workload struct {
 	Name string
@@ -34,7 +44,7 @@ func All() []Workload {
 		{Name: "strings_uescaped", Data: arrayOf(uEscapedStringElem)},
 		{Name: "bools_nulls", Data: arrayOf(boolNullElem)},
 		{Name: "object_keys", Data: objectKeys()},
-		{Name: "nested_arrays", Data: nested("[", "]")},
+		{Name: "nested_arrays", Data: nestedArrays()},
 		{Name: "nested_objects", Data: nestedObjects()},
 		{Name: "whitespace_heavy", Data: whitespaceHeavy()},
 		{Name: "mixed", Data: mixed()},
@@ -240,29 +250,36 @@ func objectKeys() []byte {
 	return []byte(b.String())
 }
 
-// nested builds an array nested to a depth that reaches the target size, then
-// closes it. open/closing are the matching delimiters.
-func nested(open, closing string) []byte {
-	depth := targetBytes / 2
-
-	var b strings.Builder
-	b.Grow(2*depth + 8)
-	b.WriteString(strings.Repeat(open, depth))
-	b.WriteString(strings.Repeat(closing, depth))
-
-	return []byte(b.String())
+// nestedArrays builds "[[[[...]]]],[[[[...]]]],...]": chains of empty arrays
+// nestDepth levels deep, repeated until the target size is reached.
+func nestedArrays() []byte {
+	return repeatChain(strings.Repeat("[", nestDepth) + strings.Repeat("]", nestDepth))
 }
 
+// nestedObjects builds an array of {"k":{"k":{...1...}}} chains, each nestDepth
+// levels deep.
 func nestedObjects() []byte {
-	// {"k":{"k":{...1...}}} nested deeply
 	const wrap = `{"k":`
-	depth := targetBytes / (len(wrap) + 1)
 
+	return repeatChain(strings.Repeat(wrap, nestDepth) + "1" + strings.Repeat("}", nestDepth))
+}
+
+// repeatChain wraps repetitions of one nesting chain in a top-level array until
+// the target size is reached. Repeating a bounded chain keeps the payload at
+// ~256KiB without deepening it past [nestDepth].
+func repeatChain(chain string) []byte {
 	var b strings.Builder
-	b.Grow(targetBytes + 16)
-	b.WriteString(strings.Repeat(wrap, depth))
-	b.WriteByte('1')
-	b.WriteString(strings.Repeat("}", depth))
+	b.Grow(targetBytes + len(chain) + 8)
+	b.WriteByte('[')
+
+	for i := 0; b.Len() < targetBytes; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(chain)
+	}
+
+	b.WriteByte(']')
 
 	return []byte(b.String())
 }

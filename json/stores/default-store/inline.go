@@ -35,12 +35,19 @@ func packString(value []byte) uint64 {
 	return packBytes(value)
 }
 
+// ensureEmptyBuffer returns an empty buffer with room for at least size bytes, reusing the
+// caller-provided scratch when there is one.
+//
+// The scratch is truncated *before* growing it: [slices.Grow] reserves capacity past the current
+// length, so growing a full scratch (e.g. a `var buf [8]byte` passed as `buf[:]`) would ask for
+// len+size and reallocate, silently defeating the point of passing a scratch at all. Since the
+// content is discarded anyway, only the capacity matters here.
 func ensureEmptyBuffer(size int, buffer ...[]byte) []byte {
 	if len(buffer) == 0 || buffer[0] == nil {
 		return make([]byte, 0, size)
 	}
 
-	out := slices.Grow(buffer[0], size)
+	out := slices.Grow(buffer[0][:0], size)
 
 	return out[:0]
 }
@@ -96,14 +103,7 @@ func packASCII(value []byte) uint64 {
 func unpackASCII(size int, payload uint64, buffer ...[]byte) []byte {
 	assertInlineASCIIUnpackSize(size)
 
-	var out []byte
-	if len(buffer) == 0 || buffer[0] == nil {
-		var buf [maxInlineBytes + 1]byte
-		out = buf[:]
-	} else {
-		out = slices.Grow(buffer[0], maxInlineBytes+1)
-		out = out[:maxInlineBytes+1]
-	}
+	out := ensureEmptyBuffer(maxInlineBytes+1, buffer...)[:maxInlineBytes+1]
 
 	out[0] = byte((payload & uint64(0x000000000000007f)))
 	out[1] = byte((payload & uint64(0x0000000000003f80)) >> asciiBits)
@@ -237,13 +237,9 @@ func appendUnpackBlanks(dst []byte, size int, payload uint64) []byte {
 //
 // A preallocated buffer may be provided. Otherwise, the function allocates a slice of bytes to store the result.
 func unpackBlanks(size int, payload uint64, buffer ...[]byte) []byte {
-	var out []byte
-	if len(buffer) == 0 || buffer[0] == nil {
-		out = make([]byte, 0, size) // this allocation is returned to the caller. Can't recycle it.
-	} else {
-		out = slices.Grow(buffer[0], size)
-		out = out[:0]
-	}
+	// when no scratch is provided, ensureEmptyBuffer allocates and that allocation is returned to the
+	// caller: it can't be recycled.
+	out := ensureEmptyBuffer(size, buffer...)
 
 	for offsetBits := 0; offsetBits < size*bitsPerBlank; offsetBits += bitsPerBlank {
 		u := byte(payload >> offsetBits & blankEncodingMask)

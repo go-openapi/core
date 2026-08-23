@@ -38,12 +38,16 @@ func (s *Store) compressRatioHeuristic(size int) int {
 }
 
 func (s *Store) uncompressRatioHeuristic(size int) int {
+	estimate := size * compressionRatio(s.compressionLevel)
 	if size <= minCompressedSize {
 		// compressed size is at minimum: means that we are likely to have a higher than usual compression ratio
-		return 2 * size * compressionRatio(s.compressionLevel)
+		estimate *= 2
 	}
 
-	return size * compressionRatio(s.compressionLevel)
+	// Whatever the ratio says, a compressed payload had to clear the compression threshold to be
+	// compressed at all, so the uncompressed value is at least that long. For the shortest payloads
+	// — the ones go1.27 inlines in the handle — this is by far the better bound of the two.
+	return max(estimate, s.compressionThreshold+1)
 }
 
 func (s *Store) compressString(value []byte, buffer ...[]byte) []byte {
@@ -112,18 +116,40 @@ func (s *Store) appendUncompressString(dst, value []byte) []byte {
 	return append(dst, wrt.Bytes()...)
 }
 
-func (s *Store) uncompressStringReader(value []byte) (io.Reader, func()) {
-	rdr, redeemReader := borrowBufferWithRedeem(
+// inflateSession is an inflating reader together with the pooled resources backing it.
+//
+// It is returned and held by value on purpose. The previous shape — returning a redeem closure —
+// captured three variables, so the closure escaped to the heap on every call: one allocation per
+// compressed value streamed through [Store.WriteTo].
+//
+// Do not convert the session itself to an [io.Reader]: boxing this struct into an interface would
+// put that allocation straight back. Hand [inflateSession.reader] to the consumer instead — it is
+// already an interface value, and interface-to-interface assignment does not allocate.
+type inflateSession struct {
+	reader       flateReader
+	redeemReader func()
+	redeemSource func()
+}
+
+// redeem closes the inflating reader and hands every borrowed resource back to its pool.
+func (i inflateSession) redeem() {
+	_ = i.reader.Close()
+	i.redeemReader()
+	i.redeemSource()
+}
+
+func (s *Store) uncompressStringReader(value []byte) inflateSession {
+	src, redeemSource := borrowBufferWithRedeem(
 		len(value),
 	) // use [bytes.Buffer] rather than [bytes.Reader] because it may be recycled
-	_, _ = rdr.Write(
+	_, _ = src.Write(
 		value,
 	) // since we don't use [bytes.Reader] we indulge into an extra copy
-	inflater, redeemInflater := borrowFlateReaderWithRedeem(rdr, s.dict)
+	reader, redeemReader := borrowFlateReaderWithRedeem(src, s.dict)
 
-	return inflater, func() {
-		_ = inflater.Close()
-		redeemInflater()
-		redeemReader()
+	return inflateSession{
+		reader:       reader,
+		redeemReader: redeemReader,
+		redeemSource: redeemSource,
 	}
 }

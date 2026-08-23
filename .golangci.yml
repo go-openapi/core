@@ -8,6 +8,7 @@ linters:
     - errorlint
     - err113 # temporarily disabled
     - exhaustruct
+    - exhaustruct_v5
     - forcetypeassert
     - funlen
     #- gochecknoglobals

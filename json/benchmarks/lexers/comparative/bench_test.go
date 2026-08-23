@@ -3,7 +3,6 @@ package comparative
 import (
 	"fmt"
 	"io"
-	"strings"
 	"testing"
 
 	"github.com/go-openapi/core/json/benchmarks/lexers/comparative/easyjson"
@@ -15,66 +14,8 @@ import (
 	"github.com/go-openapi/swag/pools"
 )
 
-// deeplyNested workloads (tens of thousands of levels) are excluded from the
-// easyjson comparison: its typed API forces a recursive descent that would
-// overflow the goroutine stack, whereas the default-lexer scans iteratively.
-// That is an API-shape difference, not a lexing-speed one.
-func deeplyNested(name string) bool {
-	return strings.HasPrefix(name, "nested_")
-}
-
-// factory builds a fresh lexers.Lexer over data, together with a release
-// callback (e.g. to redeem a pooled lexer); release is a no-op when not needed.
-type factory struct {
-	name string
-	make func(data []byte) (jlex.Lexer, func())
-}
-
-func factories() []factory {
-	noRelease := func() {}
-
-	return []factory{
-		{
-			name: "default-lexer/bytes",
-			make: func(d []byte) (jlex.Lexer, func()) {
-				return deflex.NewWithBytes(d), noRelease
-			},
-		},
-		{
-			name: "default-lexer/pooled",
-			make: func(d []byte) (jlex.Lexer, func()) {
-				l, redeem := deflex.BorrowLexerWithBytes(d)
-
-				return l, redeem
-			},
-		},
-		{
-			name: "stdlib/bytes",
-			make: func(d []byte) (jlex.Lexer, func()) {
-				return stdlib.NewWithBytes(d), noRelease
-			},
-		},
-	}
-}
-
-// drain consumes every token until EOF or error, returning the token count.
-func drain(lex jlex.Lexer) (int, error) {
-	n := 0
-	for {
-		tok := lex.NextToken()
-		if !lex.Ok() {
-			return n, lex.Err()
-		}
-		if tok.IsEOF() {
-			return n, nil
-		}
-		n++
-	}
-}
-
 // TestWorkloadsLex guards the benchmarks: every workload must lex cleanly to EOF
-// on every implementation, otherwise a benchmark could silently time a partial
-// or errored scan.
+// on every implementation, otherwise a benchmark could silently time a partial or errored scan.
 func TestWorkloadsLex(t *testing.T) {
 	var sink int
 	suite, err := workloads.Suite()
@@ -118,20 +59,14 @@ func TestWorkloadsLex(t *testing.T) {
 			)
 		}
 
-		// easyjson generic walk (recursive; skip the deeply-nested synthetics)
-		if !deeplyNested(w.Name) {
-			if err := easyjson.Walk(w.Data); err != nil {
-				t.Errorf("%s / easyjson: unexpected error: %v", w.Name, err)
-			}
+		// easyjson generic walk (recursive)
+		if err := easyjson.Walk(w.Data); err != nil {
+			t.Errorf("%s / easyjson: unexpected error: %v", w.Name, err)
 		}
 
-		// jsontext (encoding/json/v2) tokenizer; iterative, but it enforces a
-		// default max nesting depth of 10000, so skip the deeply-nested
-		// synthetics (the default-lexer has no such cap).
-		if !deeplyNested(w.Name) {
-			if err := jsontext.Walk(w.Data); err != nil {
-				t.Errorf("%s / jsontext: unexpected error: %v", w.Name, err)
-			}
+		// jsontext (encoding/json/v2) tokenizer
+		if err := jsontext.Walk(w.Data); err != nil {
+			t.Errorf("%s / jsontext: unexpected error: %v", w.Name, err)
 		}
 	}
 
@@ -233,49 +168,93 @@ func BenchmarkLexers(b *testing.B) {
 
 			// easyjson []byte-only pull lexer, generic recursive walk; numbers
 			// taken raw (no numeric conversion) for an apples-to-apples comparison
-			if !deeplyNested(w.Name) {
-				b.Run("easyjson/bytes", func(b *testing.B) {
-					b.SetBytes(int64(len(w.Data)))
-					b.ReportAllocs()
-					b.ResetTimer()
+			b.Run("easyjson/bytes", func(b *testing.B) {
+				b.SetBytes(int64(len(w.Data)))
+				b.ReportAllocs()
+				b.ResetTimer()
 
-					for range b.N {
-						_ = easyjson.Walk(w.Data)
-					}
-				})
+				for range b.N {
+					_ = easyjson.Walk(w.Data)
+				}
+			})
 
-				// easyjson with number conversion (Float64): this is where jlexer
-				// actually validates number grammar, so it is the fair comparison
-				// against the always-validating default-lexer (Float64 is lossy,
-				// which the default-lexer avoids).
-				b.Run("easyjson-f64/bytes", func(b *testing.B) {
-					b.SetBytes(int64(len(w.Data)))
-					b.ReportAllocs()
-					b.ResetTimer()
+			// easyjson with number conversion (Float64): this is where jlexer
+			// actually validates number grammar, so it is the fair comparison
+			// against the always-validating default-lexer (Float64 is lossy,
+			// which the default-lexer avoids).
+			b.Run("easyjson-f64/bytes", func(b *testing.B) {
+				b.SetBytes(int64(len(w.Data)))
+				b.ReportAllocs()
+				b.ResetTimer()
 
-					for range b.N {
-						_ = easyjson.WalkConvertNumbers(w.Data)
-					}
-				})
-			}
+				for range b.N {
+					_ = easyjson.WalkConvertNumbers(w.Data)
+				}
+			})
 
 			// jsontext (encoding/json/v2): fully-validating streaming tokenizer,
 			// numbers validated but not converted -> the closest peer to the
 			// default-lexer. Fed a *bytes.Buffer for the zero-copy bytes path.
-			// Skips the deeply-nested synthetics (default max depth 10000).
-			if !deeplyNested(w.Name) {
-				b.Run("jsontext/bytes", func(b *testing.B) {
-					b.SetBytes(int64(len(w.Data)))
-					b.ReportAllocs()
-					b.ResetTimer()
+			b.Run("jsontext/bytes", func(b *testing.B) {
+				b.SetBytes(int64(len(w.Data)))
+				b.ReportAllocs()
+				b.ResetTimer()
 
-					for range b.N {
-						_ = jsontext.Walk(w.Data)
-					}
-				})
-			}
+				for range b.N {
+					_ = jsontext.Walk(w.Data)
+				}
+			})
 		})
 	}
 
 	fmt.Fprint(io.Discard, sink)
+}
+
+// factory builds a fresh lexers.Lexer over data, together with a release
+// callback (e.g. to redeem a pooled lexer); release is a no-op when not needed.
+type factory struct {
+	name string
+	make func(data []byte) (jlex.Lexer, func())
+}
+
+func factories() []factory {
+	noRelease := func() {}
+
+	return []factory{
+		{
+			name: "default-lexer/bytes",
+			make: func(d []byte) (jlex.Lexer, func()) {
+				return deflex.NewWithBytes(d), noRelease
+			},
+		},
+		{
+			name: "default-lexer/pooled",
+			make: func(d []byte) (jlex.Lexer, func()) {
+				l, redeem := deflex.BorrowLexerWithBytes(d)
+
+				return l, redeem
+			},
+		},
+		{
+			name: "stdlib/bytes",
+			make: func(d []byte) (jlex.Lexer, func()) {
+				return stdlib.NewWithBytes(d), noRelease
+			},
+		},
+	}
+}
+
+// drain consumes every token until EOF or error, returning the token count.
+func drain(lex jlex.Lexer) (int, error) {
+	n := 0
+	for {
+		tok := lex.NextToken()
+		if !lex.Ok() {
+			return n, lex.Err()
+		}
+		if tok.IsEOF() {
+			return n, nil
+		}
+		n++
+	}
 }

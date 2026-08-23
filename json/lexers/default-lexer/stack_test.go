@@ -139,3 +139,81 @@ func TestMaxContainerStack(t *testing.T) {
 		require.ErrorIs(t, err, codes.ErrMaxContainerStack)
 	})
 }
+
+// TestVeryDeepNesting lexes documents nested 131072 levels deep, the depth the
+// comparative benchmark workloads used before they were capped to 1000 so the
+// stdlib and easyjson lexers could run them. L scans iteratively and applies no
+// depth cap unless [WithMaxContainerStack] sets one, so it must reach EOF and
+// still report the right IndentLevel at the innermost value.
+func TestVeryDeepNesting(t *testing.T) {
+	const depth = 128 * 1024
+
+	arrays := strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth)
+	objects := strings.Repeat(`{"k":`, depth) + "1" + strings.Repeat("}", depth)
+
+	t.Run("arrays", func(t *testing.T) {
+		n, indent, err := drainDeep(NewWithBytes([]byte(arrays)))
+		require.NoError(t, err)
+		assert.Equal(t, 2*depth+1, n) // one delimiter per level, plus the value
+		assert.Equal(t, depth, indent)
+	})
+
+	t.Run("objects", func(t *testing.T) {
+		n, indent, err := drainDeep(NewWithBytes([]byte(objects)))
+		require.NoError(t, err)
+		assert.Equal(t, 3*depth+1, n) // '{' and its key per level, plus the value
+		assert.Equal(t, depth, indent)
+	})
+
+	t.Run("streaming across buffer refills", func(t *testing.T) {
+		// the container stack must survive a buffer refilled hundreds of times
+		// during the descent
+		lex := New(strings.NewReader(arrays), WithBufferSize(1024))
+		n, indent, err := drainDeep(lex)
+		require.NoError(t, err)
+		assert.Equal(t, 2*depth+1, n)
+		assert.Equal(t, depth, indent)
+	})
+
+	t.Run("verbatim", func(t *testing.T) {
+		vl := NewVerbatimWithBytes([]byte(arrays))
+		n := 0
+		for {
+			tok := vl.NextToken()
+			if !vl.Ok() || tok.IsEOF() {
+				break
+			}
+			n++
+		}
+		require.NoError(t, vl.Err())
+		assert.Equal(t, 2*depth+1, n)
+	})
+
+	t.Run("unbalanced is rejected", func(t *testing.T) {
+		// one closing bracket short, 131072 levels down
+		s := strings.Repeat("[", depth) + strings.Repeat("]", depth-1)
+		_, _, err := drainDeep(NewWithBytes([]byte(s)))
+		require.ErrorIs(t, err, codes.ErrNotInArray)
+	})
+}
+
+// drainDeep runs a semantic lexer to EOF and returns the token count, the
+// IndentLevel seen at the innermost value, and the final error. Unlike
+// [drainLexer] it applies no token cap, so it can drain deeply-nested documents
+// whole.
+func drainDeep(lex *L) (int, int, error) {
+	n, indent := 0, 0
+	for {
+		tok := lex.NextToken()
+		if !lex.Ok() {
+			return n, indent, lex.Err()
+		}
+		if tok.IsEOF() {
+			return n, indent, nil
+		}
+		if tok.Kind() == token.Number {
+			indent = lex.IndentLevel()
+		}
+		n++
+	}
+}

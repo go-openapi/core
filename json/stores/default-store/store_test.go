@@ -172,14 +172,28 @@ func testGetPutValue(s stores.Store) func(*testing.T) {
 			str := strings.Repeat("a", 129)
 			l := s.Len()
 			t.Run("should retrieve original value", checkString(s, str))
-			t.Run("should add less than original string to arena", func(t *testing.T) {
-				assert.Greater(t, s.Len(), l)
-				assert.Less(t, s.Len(), l+len(str))
-			})
-			t.Run("handle header should be large compressed string", func(t *testing.T) {
+			// we may have a different encoding here, depending on the version of the flate lib
+			t.Run("handle header should be one kind of compressed string", func(t *testing.T) {
 				input := values.MakeStringValue(str)
 				h := s.PutValue(input)
-				assert.Equal(t, stores.Handle(headerCompressedString), h&headerMask)
+				header := h & headerMask
+				compressedString := stores.Handle(headerCompressedString)
+				compressedInlinedString := stores.Handle(headerInlinedCompressedString)
+				require.True(t, header == compressedString || header == compressedInlinedString)
+
+				if header == compressedString {
+					// compressed in arena
+					t.Run("should add less than original string to arena", func(t *testing.T) {
+						assert.Greater(t, s.Len(), l)
+						assert.Less(t, s.Len(), l+len(str))
+					})
+				} else {
+					// compressed inline
+					t.Run("should add 0 length to arena", func(t *testing.T) {
+						assert.Equal(t, s.Len(), l)
+						assert.Less(t, s.Len(), l+len(str))
+					})
+				}
 			})
 			t.Run("should retrieve original value (token)", checkStringToken(s, str))
 		})
