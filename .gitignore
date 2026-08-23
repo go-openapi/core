@@ -3,6 +3,7 @@ vendor
 Godeps
 .idea
 *.out
+*.pprof
 .mcp.json
 .worktrees
 go.work.sum
