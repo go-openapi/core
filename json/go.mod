@@ -3,7 +3,7 @@ module github.com/go-openapi/core/json
 go 1.25.0
 
 require (
-	github.com/go-openapi/swag/conv v0.29.0
-	github.com/go-openapi/swag/pools v0.29.0
-	github.com/go-openapi/testify/v2 v2.6.1
+	github.com/go-openapi/swag/conv v0.29.1
+	github.com/go-openapi/swag/pools v0.29.1
+	github.com/go-openapi/testify/v2 v2.7.0
 )
